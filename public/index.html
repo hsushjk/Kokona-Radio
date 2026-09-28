@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kokona-Radio</title>
+<link rel="icon" type="image/png" href="/favicon-v1.png">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: #07070a;
+    color: #ededf2;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC',
+                 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .bg {
+    position: fixed;
+    inset: -8%;
+    z-index: 0;
+    background-position: center;
+    background-size: cover;
+    filter: blur(110px) saturate(1.35) brightness(0.55);
+    transform: scale(1.08);
+    transition: background-image 1.2s ease;
+    will-change: background-image;
+  }
+
+  .shade {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    background:
+      radial-gradient(ellipse 120% 80% at 50% 42%, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.62) 100%),
+      linear-gradient(180deg, rgba(6,6,9,0.45) 0%, rgba(6,6,9,0.25) 45%, rgba(6,6,9,0.6) 100%);
+    pointer-events: none;
+  }
+
+  .grain {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    opacity: 0.05;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+
+  .stage {
+    position: relative;
+    z-index: 3;
+    height: 100%;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: clamp(20px, 3.2vh, 38px) clamp(24px, 3.6vw, 60px);
+  }
+
+  .top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.42);
+    font-weight: 500;
+  }
+  .live {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: rgba(255,255,255,0.72);
+  }
+  .live i {
+    display: inline-block;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: #ff453a;
+    box-shadow: 0 0 10px rgba(255,69,58,0.85);
+    animation: blink 2.4s ease-in-out infinite;
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.28; }
+  }
+
+  .main {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: clamp(36px, 5vw, 84px);
+    align-items: center;
+    min-height: 0;
+    padding: clamp(18px, 3.5vh, 48px) 0;
+  }
+
+  .art {
+    aspect-ratio: 1 / 1;
+    height: min(60vh, 38vw);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+    background: rgba(255,255,255,0.02);
+    box-shadow:
+      0 40px 90px -28px rgba(0,0,0,0.85),
+      0 6px 20px -6px rgba(0,0,0,0.6),
+      0 0 0 1px rgba(255,255,255,0.06);
+  }
+  .art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    opacity: 0;
+    transition: opacity 0.9s ease;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+  .art img.on { opacity: 1; }
+
+  .info {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(14px, 2vh, 22px);
+    min-width: 0;
+  }
+
+  .title {
+    font-size: clamp(26px, 3.2vw, 48px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.12;
+    color: #fff;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-shadow: 0 2px 24px rgba(0,0,0,0.4);
+  }
+  .artist {
+    font-size: clamp(12px, 1.05vw, 15px);
+    letter-spacing: 0.06em;
+    color: rgba(255,255,255,0.48);
+    margin-top: -6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .lyrics {
+    position: relative;
+    height: min(32vh, 300px);
+    overflow: hidden;
+    margin-top: 6px;
+    -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 16%, #000 84%, transparent 100%);
+            mask-image: linear-gradient(180deg, transparent 0%, #000 16%, #000 84%, transparent 100%);
+  }
+  .lyrics-inner {
+    transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform;
+  }
+  .ln {
+    font-size: clamp(13px, 1.1vw, 16px);
+    line-height: 1.95;
+    color: rgba(255,255,255,0.26);
+    transition: color 0.4s ease;
+    padding: 1px 0;
+    letter-spacing: 0.01em;
+  }
+  .ln.on { color: rgba(255,255,255,0.96); }
+  .ln.blank { color: rgba(255,255,255,0.16); }
+
+  .bottom {
+    display: flex;
+    align-items: center;
+    gap: clamp(14px, 1.6vw, 24px);
+    padding-top: clamp(14px, 2vh, 22px);
+    border-top: 1px solid rgba(255,255,255,0.07);
+  }
+  .time {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    color: rgba(255,255,255,0.42);
+    font-variant-numeric: tabular-nums;
+    min-width: 42px;
+  }
+  .time.r { text-align: right; }
+
+  .track {
+    flex: 1;
+    height: 1px;
+    background: rgba(255,255,255,0.12);
+    position: relative;
+    margin: 4px 0;
+  }
+  .track .fill {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 0;
+    background: rgba(255,255,255,0.85);
+  }
+  .track .dot {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 10px rgba(255,255,255,0.6);
+    transform: translate(-50%, -50%);
+  }
+
+  .gate {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    background: #07070a;
+    display: grid;
+    place-items: center;
+    transition: opacity 0.8s ease, visibility 0.8s;
+  }
+  .gate.gone {
+    opacity: 0;
+    visibility: hidden;
+  }
+  #enter {
+    background: transparent;
+    border: 0;
+    color: rgba(255,255,255,0.72);
+    font: inherit;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.55em;
+    text-transform: uppercase;
+    padding: 22px 6px 22px 20px;
+    position: relative;
+    cursor: pointer;
+    transition: color 0.35s ease;
+  }
+  #enter::before,
+  #enter::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0;
+    height: 1px;
+    background: rgba(255,255,255,0.16);
+    transition: background 0.4s ease;
+  }
+  #enter::before { top: 0; }
+  #enter::after  { bottom: 0; }
+  #enter:hover { color: #fff; }
+  #enter:hover::before,
+  #enter:hover::after { background: rgba(255,255,255,0.72); }
+
+  @media (max-width: 860px), (max-aspect-ratio: 1/1) {
+    .stage { padding: 20px 22px; }
+    .main {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto auto;
+      gap: 26px;
+      align-items: start;
+      padding: 12px 0;
+    }
+    .art {
+      height: auto;
+      width: min(62vw, 34vh);
+      max-width: 280px;
+      margin: 0 auto;
+    }
+    .info { gap: 12px; }
+    .title { font-size: clamp(22px, 6vw, 32px); }
+    .lyrics { height: 22vh; min-height: 120px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg" id="bg"></div>
+<div class="shade"></div>
+<div class="grain"></div>
+
+<main class="stage">
+  <header class="top">
+    <span class="live"><i></i>On Air</span>
+    <span><span id="listeners">0</span> 位听众 &nbsp;·&nbsp; <span id="clock">--:--</span></span>
+  </header>
+
+  <section class="main">
+    <div class="art">
+      <img id="cover" alt="">
+    </div>
+    <div class="info">
+      <div class="title" id="title">正在连接</div>
+      <div class="artist" id="artist"></div>
+      <div class="lyrics" id="lyrics">
+        <div class="lyrics-inner" id="lyricsInner"></div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="bottom">
+    <span class="time" id="elapsed">0:00</span>
+    <div class="track">
+      <div class="fill" id="fill"></div>
+      <div class="dot" id="dot"></div>
+    </div>
+    <span class="time r" id="duration">0:00</span>
+  </footer>
+</main>
+
+<div class="gate" id="gate">
+  <button id="enter">进入电台</button>
+</div>
+
+<script src="/hls.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var SID = (function () {
+    try {
+      var k = 'radio_sid';
+      var v = localStorage.getItem(k);
+      if (!v || !/^[A-Za-z0-9_-]{8,64}$/.test(v)) {
+        v = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        localStorage.setItem(k, v);
+      }
+      return v;
+    } catch (e) {
+      return 'r' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    }
+  })();
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  var bg          = $('bg');
+  var cover       = $('cover');
+  var titleEl     = $('title');
+  var artistEl    = $('artist');
+  var lyricsBox   = $('lyrics');
+  var lyricsInner = $('lyricsInner');
+  var fillEl      = $('fill');
+  var dotEl       = $('dot');
+  var elapsedEl   = $('elapsed');
+  var durationEl  = $('duration');
+  var listenersEl = $('listeners');
+  var clockEl     = $('clock');
+  var gate        = $('gate');
+  var enterBtn    = $('enter');
+
+  var currentId = null;
+  var currentDuration = 0;
+  var baseElapsed = 0;
+  var baseAt = 0;
+  var lyrics = [];
+  var activeLine = -1;
+  var started = false;
+  var hlsInstance = null;
+
+  function fmt(sec) {
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    sec = Math.floor(sec);
+    var m = Math.floor(sec / 60);
+    var s = sec % 60;
+    return m + ':' + (s < 10 ? '0' + s : s);
+  }
+
+  function parseLRC(text) {
+    if (!text) return [];
+    var out = [];
+    var tagRe = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+    var lines = text.split(/\r?\n/);
+
+    for (var i = 0; i < lines.length; i++) {
+      var raw = lines[i];
+
+      tagRe.lastIndex = 0;
+      var firstTime = -1;
+      var m;
+      while ((m = tagRe.exec(raw)) !== null) {
+        var mm = parseInt(m[1], 10);
+        var ss = parseInt(m[2], 10);
+        var fracRaw = m[3] || '';
+        var frac = fracRaw ? parseInt((fracRaw + '00').slice(0, 3), 10) / 1000 : 0;
+        var t = mm * 60 + ss + frac;
+        if (firstTime < 0) firstTime = t;
+      }
+      if (firstTime < 0) continue;
+
+      tagRe.lastIndex = 0;
+      var content = raw.replace(tagRe, '').trim();
+      if (!content) continue;
+
+      out.push({ t: firstTime, text: content });
+    }
+
+    return out.sort(function (a, b) { return a.t - b.t; });
+  }
+
+  function renderLyrics() {
+    lyricsInner.innerHTML = '';
+    lyricsInner.style.transform = 'translateY(0)';
+    activeLine = -1;
+    if (!lyrics.length) {
+      var d = document.createElement('div');
+      d.className = 'ln blank';
+      d.textContent = '暂无歌词';
+      lyricsInner.appendChild(d);
+      return;
+    }
+    for (var i = 0; i < lyrics.length; i++) {
+      var el = document.createElement('div');
+      el.className = 'ln';
+      el.textContent = lyrics[i].text;
+      lyricsInner.appendChild(el);
+    }
+  }
+
+  function updateLyric(elapsed) {
+    if (!lyrics.length) return;
+    var idx = -1;
+    for (var i = 0; i < lyrics.length; i++) {
+      if (lyrics[i].t <= elapsed) idx = i; else break;
+    }
+    if (idx === activeLine) return;
+    activeLine = idx;
+    var kids = lyricsInner.children;
+    for (var j = 0; j < kids.length; j++) {
+      if (j === idx) kids[j].classList.add('on');
+      else kids[j].classList.remove('on');
+    }
+    if (idx >= 0 && kids[idx]) {
+      var el = kids[idx];
+      var y = el.offsetTop + el.offsetHeight / 2 - lyricsBox.clientHeight / 2;
+      lyricsInner.style.transform = 'translateY(' + (-y) + 'px)';
+    } else {
+      lyricsInner.style.transform = 'translateY(0)';
+    }
+  }
+
+  function updateProgress(elapsed) {
+    elapsedEl.textContent = fmt(elapsed);
+    durationEl.textContent = fmt(currentDuration);
+    var p = currentDuration > 0 ? Math.min(1, elapsed / currentDuration) : 0;
+    var pct = (p * 100).toFixed(3) + '%';
+    fillEl.style.width = pct;
+    dotEl.style.left = pct;
+    updateLyric(elapsed);
+  }
+
+  async function loadLyrics(id) {
+    lyrics = [];
+    renderLyrics();
+    try {
+      var r = await fetch('/lyrics/' + id, { cache: 'no-store' });
+      if (r.ok) {
+        var text = await r.text();
+        lyrics = parseLRC(text);
+      }
+    } catch (e) {}
+    renderLyrics();
+  }
+
+  function setCover(id, hasCover) {
+    if (!hasCover) {
+      cover.classList.remove('on');
+      cover.removeAttribute('src');
+      bg.style.backgroundImage = 'none';
+      return;
+    }
+    var src = '/cover/' + id;
+    var probe = new Image();
+    probe.onload = function () {
+      cover.src = src;
+      cover.classList.add('on');
+      bg.style.backgroundImage = 'url("' + src + '")';
+    };
+    probe.onerror = function () {
+      cover.classList.remove('on');
+      bg.style.backgroundImage = 'none';
+    };
+    probe.src = src;
+  }
+
+  async function poll() {
+    try {
+      var r = await fetch('/api/status?sid=' + encodeURIComponent(SID), { cache: 'no-store' });
+      if (!r.ok) return;
+      var d = await r.json();
+
+      listenersEl.textContent = d.listeners != null ? d.listeners : 0;
+
+      if (!d.playing || !d.track) {
+        return;
+      }
+      var t = d.track;
+
+      if (t.id !== currentId) {
+        currentId = t.id;
+        titleEl.textContent = t.title || '未知曲目';
+        artistEl.textContent = t.artist || '';
+        setCover(t.id, !!t.hasCover);
+        loadLyrics(t.id);
+      }
+
+      currentDuration = t.duration || 0;
+      baseElapsed = d.elapsed || 0;
+      baseAt = performance.now();
+
+      updateProgress(baseElapsed);
+    } catch (e) {}
+  }
+
+  function rafLoop() {
+    if (baseAt) {
+      var since = (performance.now() - baseAt) / 1000;
+      var e = currentDuration > 0
+        ? Math.min(baseElapsed + since, currentDuration)
+        : baseElapsed + since;
+      updateProgress(e);
+    }
+    requestAnimationFrame(rafLoop);
+  }
+  requestAnimationFrame(rafLoop);
+
+  function tickClock() {
+    var d = new Date();
+    clockEl.textContent =
+      (d.getHours() < 10 ? '0' : '') + d.getHours() + ':' +
+      (d.getMinutes() < 10 ? '0' : '') + d.getMinutes();
+  }
+  setInterval(tickClock, 1000);
+  tickClock();
+
+  function startPlayback() {
+    var audio = new Audio();
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+
+    var url = '/stream/stream.m3u8';
+
+    if (window.Hls && window.Hls.isSupported()) {
+      hlsInstance = new window.Hls({
+        liveDurationInfinity: true,
+        liveSyncDurationCount: 2,
+        liveMaxLatencyDurationCount: 4,
+        maxLiveSyncPlaybackRate: 1.5,
+        manifestLoadingMaxRetry: 30,
+        manifestLoadingRetryDelay: 1500,
+        levelLoadingMaxRetry: 30,
+        fragLoadingMaxRetry: 30,
+      });
+      hlsInstance.loadSource(url);
+      hlsInstance.attachMedia(audio);
+      hlsInstance.on(window.Hls.Events.MANIFEST_PARSED, function () {
+        audio.play().catch(function () {});
+      });
+      hlsInstance.on(window.Hls.Events.ERROR, function (evt, data) {
+        if (!data || !data.fatal) return;
+        if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
+          hlsInstance.startLoad();
+        } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
+          hlsInstance.recoverMediaError();
+        } else {
+          hlsInstance.destroy();
+          hlsInstance = null;
+          setTimeout(startPlayback, 3000);
+        }
+      });
+    } else if (audio.canPlayType('application/vnd.apple.mpegurl')) {
+      audio.src = url;
+      audio.play().catch(function () {});
+      audio.addEventListener('error', function () {
+        setTimeout(function () {
+          audio.src = url + '?t=' + Date.now();
+          audio.play().catch(function () {});
+        }, 3000);
+      });
+    }
+  }
+
+  enterBtn.addEventListener('click', function () {
+    if (started) return;
+    started = true;
+    gate.classList.add('gone');
+    startPlayback();
+    poll();
+    setInterval(poll, 2000);
+  });
+
+})();
+</script>
+</body>
+</html>

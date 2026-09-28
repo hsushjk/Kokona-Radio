@@ -1,0 +1,33 @@
+* text=auto eol=lf
+
+*.js    text eol=lf
+*.json  text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.sh    text eol=lf
+
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+
+*.mp3   binary
+*.flac  binary
+*.m4a   binary
+*.mp4   binary
+*.wav   binary
+*.ogg   binary
+*.opus  binary
+*.aac   binary
+
+public/hls.min.js linguist-vendored=true
+hls/** linguist-generated=true

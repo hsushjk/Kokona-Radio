@@ -1,0 +1,17 @@
+{
+  "port": 3001,
+  "musicDir": "/opt/radio/music",
+  "hlsDir": "/opt/radio/hls",
+  "publicDir": "/www/wwwroot/radio",
+  "fifoPath": "/tmp/radio-pcm.fifo",
+  "ffmpegPath": "/usr/bin/ffmpeg",
+  "ffprobePath": "/usr/bin/ffprobe",
+  "bitrate": "192k",
+  "sampleRate": 44100,
+  "hlsTime": 2,
+  "hlsListSize": 6,
+  "shuffle": true,
+  "streamDelay": 5,
+  "controlPath": "ctrl",
+  "controlToken": "1234567890passwd"
+}
