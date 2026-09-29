@@ -43,7 +43,7 @@ if (!CFG.controlPath || !/^[a-zA-Z0-9_-]{1,64}$/.test(CFG.controlPath)) {
   CFG.controlPath = '';
 }
 if (CFG.controlToken && CFG.controlToken.length < 16) {
-  console.warn('[warn] controlToken 长度小于 16');
+  console.warn('[warn] controlToken 长度小于 16，建议更换');
 }
 
 const CTRL_BASE = CFG.controlPath ? '/' + CFG.controlPath : '';
@@ -287,12 +287,14 @@ function switchTo(track, opts) {
 
   const dec = spawn(CFG.ffmpegPath, [
     '-hide_banner', '-loglevel', 'error',
+    '-threads', '1',
     '-re',
     '-i', track.file,
     '-vn',
     '-f', 's16le',
     '-ar', String(CFG.sampleRate),
     '-ac', '2',
+    '-threads', '1',
     'pipe:1',
   ]);
   currentDecoder = dec;
@@ -426,9 +428,10 @@ function buildState() {
     clientTrack: d ? {
       title: d.entry.track.title, artist: d.entry.track.artist, elapsed: Math.max(0, Math.floor(d.elapsed)),
     } : null,
-    queue: queue.slice(0, 50).map(t => ({ id: t.id, title: t.title, artist: t.artist })),
-    history: playHistory.slice(-50).reverse().map(t => ({ id: t.id, title: t.title, artist: t.artist })),
+    queue: queue.map(t => ({ id: t.id, title: t.title, artist: t.artist })),
+    history: playHistory.slice().reverse().map(t => ({ id: t.id, title: t.title, artist: t.artist })),
     listeners: getUserList(),
+    librarySize: tracks.length,
   };
 }
 
@@ -441,20 +444,24 @@ const CTRL_HTML = `<!DOCTYPE html>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',system-ui,sans-serif;background:#0d0d10;color:#ddd;font-size:13px;min-height:100vh;padding:24px}
-.wrap{max-width:960px;margin:0 auto}
+.wrap{max-width:1100px;margin:0 auto}
 h1{font-size:13px;font-weight:500;letter-spacing:.2em;text-transform:uppercase;color:#888;margin-bottom:20px}
 .auth{display:flex;gap:8px;margin-bottom:20px}
 input{flex:1;padding:10px 12px;background:#1a1a1e;border:1px solid #2a2a30;border-radius:6px;color:#eee;font:inherit;outline:none}
 input:focus{border-color:#444}
 button{padding:10px 20px;background:#1f1f24;border:1px solid #2a2a30;border-radius:6px;color:#ddd;font:inherit;cursor:pointer;transition:background .15s}
-button:hover{background:#2a2a30}
-button:active{background:#333}
-.controls{display:flex;gap:10px;margin-bottom:20px}
+button:hover:not(:disabled){background:#2a2a30}
+button:active:not(:disabled){background:#333}
+button:disabled{opacity:.3;cursor:not-allowed}
+select{padding:6px 10px;background:#1a1a1e;border:1px solid #2a2a30;border-radius:6px;color:#ddd;font:inherit;outline:none;cursor:pointer}
+.controls{display:flex;gap:10px;margin-bottom:16px}
 .controls button{flex:1}
+.toolbar{display:flex;align-items:center;gap:8px;margin-bottom:16px;font-size:12px;color:#888}
 .cols{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-@media(max-width:720px){.cols{grid-template-columns:1fr}}
-.col h2{font-size:10px;font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:#666;margin-bottom:8px}
-.list{background:#131316;border:1px solid #1e1e22;border-radius:6px;max-height:420px;overflow-y:auto}
+@media(max-width:900px){.cols{grid-template-columns:1fr}}
+.col h2{font-size:10px;font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:#666;margin-bottom:8px;display:flex;justify-content:space-between;align-items:baseline}
+.col h2 .count{color:#444;font-weight:400;letter-spacing:0;text-transform:none;font-size:11px}
+.list{background:#131316;border:1px solid #1e1e22;border-radius:6px;height:420px;overflow-y:auto}
 .item{padding:8px 12px;border-bottom:1px solid #1a1a1e;font-size:12px;color:#aaa}
 .item:last-child{border-bottom:0}
 .item .t{color:#ddd}
@@ -463,6 +470,9 @@ button:active{background:#333}
 .status{margin-bottom:16px;padding:12px 14px;background:#131316;border:1px solid #1e1e22;border-radius:6px;font-size:12px;color:#888}
 .status .now{color:#ddd}
 .err{color:#e53;font-size:12px;margin-bottom:10px;min-height:16px}
+.pager{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:8px;font-size:11px;color:#666;height:26px}
+.pager button{padding:3px 12px;font-size:11px}
+.pager .num{color:#aaa}
 #panel[hidden],#auth[hidden]{display:none}
 </style>
 </head>
@@ -480,10 +490,34 @@ button:active{background:#333}
 <button id="prev">上一首</button>
 <button id="next">下一首</button>
 </div>
+<div class="toolbar">
+<span>每页</span>
+<select id="pageSize">
+<option value="50">50</option>
+<option value="100">100</option>
+<option value="250">250</option>
+<option value="500">500</option>
+<option value="800">800</option>
+<option value="1000">1000</option>
+</select>
+<span>条</span>
+</div>
 <div class="cols">
-<div class="col"><h2>待播队列</h2><div class="list" id="queue"></div></div>
-<div class="col"><h2>已播历史</h2><div class="list" id="history"></div></div>
-<div class="col"><h2>在线听众</h2><div class="list" id="listeners"></div></div>
+<div class="col">
+<h2>待播队列 <span class="count" id="queueCount"></span></h2>
+<div class="list" id="queue"></div>
+<div class="pager" id="queuePager"></div>
+</div>
+<div class="col">
+<h2>已播历史 <span class="count" id="historyCount"></span></h2>
+<div class="list" id="history"></div>
+<div class="pager" id="historyPager"></div>
+</div>
+<div class="col">
+<h2>在线听众 <span class="count" id="listenersCount"></span></h2>
+<div class="list" id="listeners"></div>
+<div class="pager" id="listenersPager"></div>
+</div>
 </div>
 </div>
 </div>
@@ -494,9 +528,14 @@ var base=location.pathname;
 if(base.length>1&&base.charAt(base.length-1)==='/')base=base.slice(0,-1);
 var token='';
 var timer=null;
+var pageSize=50;
+var pageState={queue:1,history:1,listeners:1};
+var dataCache={queue:[],history:[],listeners:[]};
+
 function $(id){return document.getElementById(id)}
 function setErr(s){$('err').textContent=s||''}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+
 async function api(p,o){
 o=o||{};
 o.headers=o.headers||{};
@@ -506,20 +545,47 @@ var r=await fetch(base+p,o);
 if(!r.ok)throw new Error('HTTP '+r.status);
 return r.json();
 }
+
+function renderItems(name,slice){
+if(name==='listeners'){
+return slice.map(function(u){return '<div class="item"><span class="t">'+esc(u.key)+'</span><span class="a">'+u.secondsAgo+'s 前</span></div>'}).join('');
+}
+return slice.map(function(t){return '<div class="item"><span class="t">'+esc(t.title)+'</span><span class="a">'+esc(t.artist)+'</span></div>'}).join('');
+}
+
+function renderPage(name){
+var items=dataCache[name]||[];
+var total=items.length;
+var pages=Math.max(1,Math.ceil(total/pageSize));
+if(pageState[name]>pages)pageState[name]=pages;
+if(pageState[name]<1)pageState[name]=1;
+var start=(pageState[name]-1)*pageSize;
+var slice=items.slice(start,start+pageSize);
+var listEl=$(name);
+if(!slice.length)listEl.innerHTML='<div class="empty">空</div>';
+else listEl.innerHTML=renderItems(name,slice);
+var countEl=$(name+'Count');
+if(countEl)countEl.textContent=total+' 条';
+var pagerEl=$(name+'Pager');
+if(pages<=1){pagerEl.innerHTML='';return}
+pagerEl.innerHTML=
+'<button data-name="'+name+'" data-page="'+(pageState[name]-1)+'"'+(pageState[name]<=1?' disabled':'')+'>上一页</button>'+
+'<span class="num">'+pageState[name]+' / '+pages+'</span>'+
+'<button data-name="'+name+'" data-page="'+(pageState[name]+1)+'"'+(pageState[name]>=pages?' disabled':'')+'>下一页</button>';
+}
+
 function render(st){
 var now=st.clientTrack?(esc(st.clientTrack.title)+' <span class="a">'+esc(st.clientTrack.artist)+'</span>'):'<span style="color:#555">无</span>';
 var srv=st.current?(esc(st.current.title)+' <span class="a">'+esc(st.current.artist)+'</span>'):'<span style="color:#555">无</span>';
-$('status').innerHTML='听众：'+esc(st.listeners.length)+' ｜ 服务端曲目：<span class="now">'+srv+'</span> ｜ 客户端正听：<span class="now">'+now+'</span>';
-var q=$('queue');
-if(!st.queue.length)q.innerHTML='<div class="empty">空</div>';
-else q.innerHTML=st.queue.map(function(t){return '<div class="item"><span class="t">'+esc(t.title)+'</span><span class="a">'+esc(t.artist)+'</span></div>'}).join('');
-var h=$('history');
-if(!st.history.length)h.innerHTML='<div class="empty">空</div>';
-else h.innerHTML=st.history.map(function(t){return '<div class="item"><span class="t">'+esc(t.title)+'</span><span class="a">'+esc(t.artist)+'</span></div>'}).join('');
-var l=$('listeners');
-if(!st.listeners.length)l.innerHTML='<div class="empty">空</div>';
-else l.innerHTML=st.listeners.map(function(u){return '<div class="item"><span class="t">'+esc(u.key)+'</span><span class="a">'+u.secondsAgo+'s 前</span></div>'}).join('');
+$('status').innerHTML='听众：'+esc(st.listeners.length)+' ｜ 曲库：'+esc(st.librarySize||0)+' 首 ｜ 服务端曲目：<span class="now">'+srv+'</span> ｜ 客户端正听：<span class="now">'+now+'</span>';
+dataCache.queue=st.queue||[];
+dataCache.history=st.history||[];
+dataCache.listeners=st.listeners||[];
+renderPage('queue');
+renderPage('history');
+renderPage('listeners');
 }
+
 async function refresh(){
 try{
 var s=await api('/api/state');
@@ -529,6 +595,7 @@ setErr('');
 setErr('连接失败：'+e.message);
 }
 }
+
 async function doAction(a){
 try{
 await api('/api/action',{method:'POST',body:JSON.stringify({action:a})});
@@ -537,8 +604,27 @@ refresh();
 setErr('操作失败：'+e.message);
 }
 }
+
+document.addEventListener('click',function(e){
+var t=e.target;
+if(t.tagName==='BUTTON'&&t.dataset&&t.dataset.name&&t.dataset.page){
+pageState[t.dataset.name]=parseInt(t.dataset.page,10);
+renderPage(t.dataset.name);
+}
+});
+
+$('pageSize').addEventListener('change',function(){
+pageSize=parseInt(this.value,10);
+pageState={queue:1,history:1,listeners:1};
+try{localStorage.setItem('radio_ctrl_pagesize',String(pageSize))}catch(e){}
+renderPage('queue');
+renderPage('history');
+renderPage('listeners');
+});
+
 $('prev').addEventListener('click',function(){doAction('prev')});
 $('next').addEventListener('click',function(){doAction('next')});
+
 $('login').addEventListener('click',function(){
 var v=$('token').value.trim();
 if(!v){setErr('请输入 token');return}
@@ -551,10 +637,20 @@ refresh();
 if(timer)clearInterval(timer);
 timer=setInterval(refresh,2000);
 });
+
 $('token').addEventListener('keydown',function(e){if(e.key==='Enter')$('login').click()});
+
 try{
 var saved=localStorage.getItem('radio_ctrl_token');
 if(saved)$('token').value=saved;
+var savedSize=localStorage.getItem('radio_ctrl_pagesize');
+if(savedSize){
+var n=parseInt(savedSize,10);
+if([50,100,250,500,800,1000].indexOf(n)>=0){
+pageSize=n;
+$('pageSize').value=String(n);
+}
+}
 }catch(e){}
 })();
 </script>
