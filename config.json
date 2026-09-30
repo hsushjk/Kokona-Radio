@@ -13,5 +13,6 @@
   "shuffle": true,
   "streamDelay": 5,
   "controlPath": "ctrl",
-  "controlToken": "1234567890passwd"
+  "controlToken": "1234567890passwd",
+  "noticePath": "/opt/radio/notice.json"
 }
