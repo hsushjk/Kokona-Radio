@@ -94,6 +94,7 @@
     grid-template-columns: auto minmax(0, 1fr);
     gap: clamp(36px, 5vw, 84px);
     align-items: center;
+    align-content: center;
     min-height: 0;
     padding: clamp(18px, 3.5vh, 48px) 0;
   }
@@ -219,8 +220,12 @@
     inset: 0;
     z-index: 10;
     background: #07070a;
-    display: grid;
-    place-items: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 44px;
+    padding: 40px;
     transition: opacity 0.8s ease, visibility 0.8s;
   }
   .gate.gone {
@@ -241,6 +246,10 @@
     cursor: pointer;
     transition: color 0.35s ease;
   }
+  #enter:disabled {
+    color: rgba(255,255,255,0.32);
+    cursor: default;
+  }
   #enter::before,
   #enter::after {
     content: '';
@@ -250,11 +259,40 @@
     background: rgba(255,255,255,0.16);
     transition: background 0.4s ease;
   }
+  #enter:disabled::before,
+  #enter:disabled::after {
+    background: rgba(255,255,255,0.08);
+  }
   #enter::before { top: 0; }
   #enter::after  { bottom: 0; }
-  #enter:hover { color: #fff; }
-  #enter:hover::before,
-  #enter:hover::after { background: rgba(255,255,255,0.72); }
+  #enter:hover:not(:disabled) { color: #fff; }
+  #enter:hover:not(:disabled)::before,
+  #enter:hover:not(:disabled)::after { background: rgba(255,255,255,0.72); }
+
+  .notice {
+    max-width: min(520px, 78vw);
+    padding: 18px 26px;
+    font-size: 13px;
+    line-height: 1.75;
+    color: rgba(255,255,255,0.58);
+    text-align: center;
+    background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    word-wrap: break-word;
+    display: none;
+  }
+  .notice.show { display: block; }
+  .notice b, .notice strong {
+    color: rgba(255,255,255,0.88);
+    font-weight: 600;
+  }
+  .notice i {
+    color: rgba(255,255,255,0.7);
+    font-style: italic;
+  }
 
   @media (max-width: 860px), (max-aspect-ratio: 1/1) {
     .stage { padding: 20px 22px; }
@@ -262,7 +300,8 @@
       grid-template-columns: 1fr;
       grid-template-rows: auto auto;
       gap: 26px;
-      align-items: start;
+      align-items: center;
+      align-content: center;
       padding: 12px 0;
     }
     .art {
@@ -274,6 +313,12 @@
     .info { gap: 12px; }
     .title { font-size: clamp(22px, 6vw, 32px); }
     .lyrics { height: 22vh; min-height: 120px; }
+  }
+
+  @media (min-width: 861px) and (min-aspect-ratio: 1/1) {
+    .art {
+      margin-left: clamp(16px, 2.6vw, 56px);
+    }
   }
 </style>
 </head>
@@ -313,13 +358,32 @@
 </main>
 
 <div class="gate" id="gate">
-  <button id="enter">进入电台</button>
+  <button id="enter" disabled>加载中</button>
+  <div class="notice" id="notice"></div>
 </div>
 
 <script src="/hls.min.js"></script>
 <script>
 (function () {
   'use strict';
+
+  fetch('/index.json', { cache: 'no-store' }).then(function (r) {
+    return r.ok ? r.json() : null;
+  }).then(function (j) {
+    if (!j) return;
+    if (j.title) document.title = j.title;
+    if (j.themeColor) {
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (!m) { m = document.createElement('meta'); m.name = 'theme-color'; document.head.appendChild(m); }
+      m.content = j.themeColor;
+    }
+    var l = document.querySelector('link[rel="manifest"]');
+    if (!l) { l = document.createElement('link'); l.rel = 'manifest'; document.head.appendChild(l); }
+    l.href = '/manifest.json';
+    if ('serviceWorker' in navigator && location.protocol === 'https:') {
+      navigator.serviceWorker.register('/sw.js').catch(function () {});
+    }
+  }).catch(function () {});
 
   var SID = (function () {
     try {
@@ -351,6 +415,7 @@
   var clockEl     = $('clock');
   var gate        = $('gate');
   var enterBtn    = $('enter');
+  var noticeEl    = $('notice');
 
   var currentId = null;
   var currentDuration = 0;
@@ -360,6 +425,19 @@
   var activeLine = -1;
   var started = false;
   var hlsInstance = null;
+  var lastNotice = null;
+
+  function showNotice(html) {
+    if (html === lastNotice) return;
+    lastNotice = html;
+    if (!html) {
+      noticeEl.classList.remove('show');
+      noticeEl.innerHTML = '';
+      return;
+    }
+    noticeEl.innerHTML = html;
+    noticeEl.classList.add('show');
+  }
 
   function fmt(sec) {
     if (!isFinite(sec) || sec < 0) sec = 0;
@@ -493,6 +571,7 @@
       var d = await r.json();
 
       listenersEl.textContent = d.listeners != null ? d.listeners : 0;
+      if (typeof d.notice === 'string') showNotice(d.notice);
 
       if (!d.playing || !d.track) {
         return;
@@ -583,8 +662,24 @@
     }
   }
 
+  var enterReady = false;
+  function enableEnter() {
+    if (enterReady) return;
+    enterReady = true;
+    enterBtn.textContent = '进入电台';
+    enterBtn.disabled = false;
+  }
+  window.addEventListener('load', enableEnter);
+  setTimeout(enableEnter, 6000);
+
+  fetch('/api/status', { cache: 'no-store' }).then(function (r) {
+    return r.ok ? r.json() : null;
+  }).then(function (d) {
+    if (d && typeof d.notice === 'string') showNotice(d.notice);
+  }).catch(function () {});
+
   enterBtn.addEventListener('click', function () {
-    if (started) return;
+    if (started || enterBtn.disabled) return;
     started = true;
     gate.classList.add('gone');
     startPlayback();
