@@ -24,6 +24,7 @@ const CFG = Object.assign({
   streamDelay: 8,
   controlPath: 'ctrl',
   controlToken: '',
+  noticePath: '/opt/radio/notice.json',
 }, (() => {
   try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')); }
   catch (e) { return {}; }
@@ -38,6 +39,7 @@ CFG.hlsDir      = abs(CFG.hlsDir);
 CFG.publicDir   = abs(CFG.publicDir);
 CFG.ffmpegPath  = abs(CFG.ffmpegPath);
 CFG.ffprobePath = abs(CFG.ffprobePath);
+CFG.noticePath  = abs(CFG.noticePath);
 
 if (!CFG.controlPath || !/^[a-zA-Z0-9_-]{1,64}$/.test(CFG.controlPath)) {
   CFG.controlPath = '';
@@ -47,6 +49,47 @@ if (CFG.controlToken && CFG.controlToken.length < 16) {
 }
 
 const CTRL_BASE = CFG.controlPath ? '/' + CFG.controlPath : '';
+
+let noticeData = { text: '', updatedAt: 0 };
+
+function loadNotice() {
+  try {
+    const raw = fs.readFileSync(CFG.noticePath, 'utf8');
+    const j = JSON.parse(raw);
+    noticeData = {
+      text: typeof j.text === 'string' ? j.text : '',
+      updatedAt: j.updatedAt || 0,
+    };
+  } catch (e) {
+    noticeData = { text: '', updatedAt: 0 };
+  }
+}
+
+function saveNotice(text) {
+  noticeData = { text: String(text || ''), updatedAt: Date.now() };
+  try {
+    fs.writeFileSync(CFG.noticePath, JSON.stringify(noticeData, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[notice] save failed:', e.message);
+  }
+}
+
+function formatNoticeHtml(text) {
+  if (!text) return '';
+  let s = String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+  s = s
+    .replace(/&lt;(\/?)br\s*\/?&gt;/gi, '<$1br>')
+    .replace(/&lt;(\/?)b&gt;/gi, '<$1b>')
+    .replace(/&lt;(\/?)strong&gt;/gi, '<$1strong>')
+    .replace(/&lt;(\/?)i&gt;/gi, '<$1i>');
+  s = s.replace(/\n/g, '<br>');
+  return s;
+}
 
 function shuffle(a) {
   a = a.slice();
@@ -143,6 +186,7 @@ let tracks = [];
 let tracksById = new Map();
 
 async function reloadLibrary() {
+  loadNotice();
   const files = scanFiles();
   const built = [];
   const LIMIT = 6;
@@ -258,7 +302,7 @@ function switchTo(track, opts) {
 
   if (current && current !== track && !fromPrev) {
     playHistory.push(current);
-    if (playHistory.length > 200) playHistory.shift();
+    if (playHistory.length > 500) playHistory.shift();
   }
 
   if (currentDecoder) {
@@ -432,6 +476,8 @@ function buildState() {
     history: playHistory.slice().reverse().map(t => ({ id: t.id, title: t.title, artist: t.artist })),
     listeners: getUserList(),
     librarySize: tracks.length,
+    notice: noticeData.text,
+    noticeUpdatedAt: noticeData.updatedAt,
   };
 }
 
@@ -473,6 +519,15 @@ select{padding:6px 10px;background:#1a1a1e;border:1px solid #2a2a30;border-radiu
 .pager{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:8px;font-size:11px;color:#666;height:26px}
 .pager button{padding:3px 12px;font-size:11px}
 .pager .num{color:#aaa}
+.notice-edit{margin-top:20px}
+.notice-edit h2{font-size:10px;font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:#666;margin-bottom:8px}
+.notice-edit textarea{width:100%;padding:10px 12px;background:#131316;border:1px solid #1e1e22;border-radius:6px;color:#ddd;font:inherit;font-size:12px;line-height:1.7;resize:vertical;min-height:80px;outline:none;font-family:inherit}
+.notice-edit textarea:focus{border-color:#3a3a42}
+.notice-actions{display:flex;align-items:center;gap:12px;margin-top:10px}
+.notice-actions button{padding:7px 16px;font-size:12px}
+.notice-status{font-size:11px;color:#666}
+.notice-status.ok{color:#6c9}
+.notice-status.err{color:#e53}
 #panel[hidden],#auth[hidden]{display:none}
 </style>
 </head>
@@ -519,6 +574,14 @@ select{padding:6px 10px;background:#1a1a1e;border:1px solid #2a2a30;border-radiu
 <div class="pager" id="listenersPager"></div>
 </div>
 </div>
+<div class="notice-edit">
+<h2>通知 / 公告</h2>
+<textarea id="noticeText" placeholder="支持 &lt;br&gt; 换行、&lt;b&gt;加粗&lt;/b&gt;、&lt;strong&gt;、&lt;i&gt;。留空则不显示。"></textarea>
+<div class="notice-actions">
+<button id="saveNotice">保存</button>
+<span class="notice-status" id="noticeStatus"></span>
+</div>
+</div>
 </div>
 </div>
 <script>
@@ -534,6 +597,7 @@ var dataCache={queue:[],history:[],listeners:[]};
 
 function $(id){return document.getElementById(id)}
 function setErr(s){$('err').textContent=s||''}
+function setNoticeStatus(s,cls){var e=$('noticeStatus');e.textContent=s||'';e.className='notice-status'+(cls?' '+cls:'')}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 
 async function api(p,o){
@@ -584,6 +648,10 @@ dataCache.listeners=st.listeners||[];
 renderPage('queue');
 renderPage('history');
 renderPage('listeners');
+var ta=$('noticeText');
+if(document.activeElement!==ta&&ta.value!==(st.notice||'')){
+ta.value=st.notice||'';
+}
 }
 
 async function refresh(){
@@ -596,9 +664,11 @@ setErr('连接失败：'+e.message);
 }
 }
 
-async function doAction(a){
+async function doAction(a,extra){
+var body={action:a};
+if(extra)for(var k in extra)body[k]=extra[k];
 try{
-await api('/api/action',{method:'POST',body:JSON.stringify({action:a})});
+await api('/api/action',{method:'POST',body:JSON.stringify(body)});
 refresh();
 }catch(e){
 setErr('操作失败：'+e.message);
@@ -624,6 +694,18 @@ renderPage('listeners');
 
 $('prev').addEventListener('click',function(){doAction('prev')});
 $('next').addEventListener('click',function(){doAction('next')});
+
+$('saveNotice').addEventListener('click',async function(){
+var text=$('noticeText').value;
+setNoticeStatus('保存中...');
+try{
+await api('/api/action',{method:'POST',body:JSON.stringify({action:'setNotice',text:text})});
+setNoticeStatus('已保存','ok');
+setTimeout(function(){setNoticeStatus('')},2500);
+}catch(e){
+setNoticeStatus('保存失败：'+e.message,'err');
+}
+});
 
 $('login').addEventListener('click',function(){
 var v=$('token').value.trim();
@@ -734,6 +816,12 @@ async function handleControl(req, res, p, u) {
       const ok = feedPrev();
       return sendJson(res, 200, { ok: ok, action: 'prev' });
     }
+    if (act === 'setNotice') {
+      const text = data && typeof data.text === 'string' ? data.text : '';
+      if (text.length > 8000) return sendJson(res, 400, { ok: false, error: 'too long' });
+      saveNotice(text);
+      return sendJson(res, 200, { ok: true, action: 'setNotice' });
+    }
     return sendJson(res, 400, { ok: false, error: 'bad action' });
   }
 
@@ -751,8 +839,13 @@ const server = http.createServer(async (req, res) => {
   if (p === '/api/status') {
     touch(req, u);
     const d = getClientTrack();
+    const noticeHtml = formatNoticeHtml(noticeData.text);
     if (!d) {
-      return sendJson(res, 200, { playing: false, buffering: true, listeners: activeCount() });
+      return sendJson(res, 200, {
+        playing: false, buffering: true,
+        listeners: activeCount(),
+        notice: noticeHtml,
+      });
     }
     return sendJson(res, 200, {
       playing: true,
@@ -760,6 +853,7 @@ const server = http.createServer(async (req, res) => {
       listeners: activeCount(),
       elapsed: Math.max(0, Math.floor(d.elapsed)),
       track: d.entry.track,
+      notice: noticeHtml,
     });
   }
 
@@ -831,6 +925,8 @@ const server = http.createServer(async (req, res) => {
     try { fs.unlinkSync(path.join(CFG.hlsDir, f)); } catch (e) {}
   }
 
+  loadNotice();
+
   ensureFifo();
   mainFF = startMainFFmpeg();
   openFifoWriter();
@@ -846,6 +942,7 @@ const server = http.createServer(async (req, res) => {
         console.log('[cfg] hls         = ' + CFG.hlsDir);
         console.log('[cfg] public      = ' + CFG.publicDir);
         console.log('[cfg] fifo        = ' + CFG.fifoPath);
+        console.log('[cfg] notice      = ' + CFG.noticePath);
         console.log('[cfg] hlsTime     = ' + CFG.hlsTime);
         console.log('[cfg] hlsListSize = ' + CFG.hlsListSize);
         console.log('[cfg] streamDelay = ' + CFG.streamDelay);
