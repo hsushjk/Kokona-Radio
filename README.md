@@ -11,6 +11,8 @@
 - 使用 `.m3u8`，fb2k / VLC 可直接打开
 - 元数据全部来自音频文件标签。标题、艺术家、专辑、封面、歌词都不需要文件命名约定，歌词优先读内嵌字段，回退到同名 `.lrc`
 - 控制面板。路径和 token 均可配置，支持上一首 / 下一首、查看待播队列、已播历史、在线听众
+- 系统通知。支持 `<br>`、`<b>`、`<strong>`、`<i>`语法并通过控制面板编辑
+- PWA 支持
 
 ## 架构
 
@@ -32,7 +34,7 @@ ffmpeg性能开销比较大，性能有限可以尝试进行以下优化(按照�
 
 - 编辑 server.js：找到'-c:a', 'aac',，将'aac'改为'libmp3lame'
 - 编辑 config.json：稍微降低"bitrate"
-- 编辑 server.js：在主 ffmpeg 参数里加：'-threads', '1',
+- 编辑 server.js：在主 ffmpeg 参数里加：'-threads', '1', 副ffmpeg也可以加
 - 编辑 config.json：稍微提高"hlsTime"
 - 编辑 config.json：将"sampleRate"改成44100，并统一音频文件采样率为44100
 
@@ -52,6 +54,7 @@ ffmpeg性能开销比较大，性能有限可以尝试进行以下优化(按照�
 └── public/              # 前端
     ├── index.html
     ├── hls.min.js       # hls音频库
+    ├── generate-pwa.sh  # pwa生成脚本
     └── favicon-v1.png   # 自备图标
 ```
 
@@ -67,6 +70,16 @@ cd kokona-radio
 ```
 
 # 配置 config.json ，存放音乐到 music
+
+# 生成 PWA（可选）
+
+```bash
+cd public
+chmod +x generate-pwa.sh
+./generate-pwa.sh
+```
+
+按提示输入标题、简称、主题色、背景色、图标路径，回车使用默认值。脚本会生成 `index.json`、`manifest.json`、`sw.js`
 
 # 启动后端
 
@@ -118,7 +131,8 @@ location / {
   "shuffle": true,
   "streamDelay": 5,
   "controlPath": "ctrl",
-  "controlToken": "1234567890passwd"
+  "controlToken": "1234567890passwd",
+  "noticePath": "/opt/radio/notice.json"
 }
 ```
 
@@ -138,6 +152,7 @@ location / {
 | `streamDelay` | UI 对齐补偿，单位秒。见下文 |
 | `controlPath` | 控制面板路径。为空则禁用控制功能 |
 | `controlToken` | 控制面板 token。至少 16 位。为空则禁用控制功能 |
+| `noticePath` | 通知数据文件路径，文件不存在时自动创建 |
 
 ## 延迟对齐
 
@@ -158,13 +173,37 @@ HLS 固有延迟 = `hlsTime × (客户端缓冲切片数 + 1) + 网络抖动`
 
 - 上一首：从已播历史中弹出最近一首，重新播放
 - 下一首：立即切换
-- 待播队列：查看接下来 50 首
-- 已播历史：查看最近 50 首
-- 在线听众：按 sid 或 IP 统计，20 秒无请求掉线
+- 待播队列：查看完整队列
+- 已播历史：查看最近 500 首
+- 在线听众：按 sid 或 IP 统计，20 秒无请求判定掉线
 
 鉴权通过 `X-Ctrl-Token` 请求头传递，使用 `crypto.timingSafeEqual` 比较。token 长度不足 16 位则整个控制功能禁用
 
 `controlPath` 也配置成不易猜测的字符串，避免扫描爆破
+
+## 系统通知
+
+通知文本存储在 `noticePath` 指定的 JSON 文件中，格式：
+
+```json
+{
+  "text": "熙熙攘攘<br>我们的a大</b>。",
+  "updatedAt": 1790773960198
+}
+```
+
+- `text` 为空字符串或文件不存在时，前端不显示通知框
+- 服务器每 5 分钟随音乐库一起重载一次。手动编辑文件后，最多 5 分钟内生效
+- 通过控制面板保存则立即生效
+- 只放行 `<br>`、`<b>`、`<strong>`、`<i>` 四种标签，其余全部转义为纯文本
+- 文本中的换行符自动转为 `<br>`
+- 通知在进入电台前的入场页显示，进入后每 2 秒轮询更新
+
+## PWA
+
+执行 `public/generate-pwa.sh` 生成 PWA 配置文件。index.html加载时读取 `index.json` 动态设置标题、主题色、注册 service worker。浏览器地址栏会自动出现安装图标，无需在页面内添加安装按钮。
+
+`index.json` 不存在时，PWA 相关功能静默跳过，页面正常工作。
 
 ## 外部播放器
 
@@ -208,3 +247,7 @@ ffmpeg 可能需要额外安装组件
 ### 歌词不显示
 
 FLAC 与 M4A 的内嵌歌词能被 ffprobe 读取。MP3 的 USLT 帧 ffprobe 读不到，需要把歌词存为与音乐文件同名的 `.lrc`，或转换标签
+
+### 网太弱了，播放起来很卡
+
+http3和2来回切换一下试试，本项目不吃带宽，但怕丢包
