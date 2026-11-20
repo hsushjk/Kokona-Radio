@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Kokona-Radio</title>
 <link rel="icon" type="image/png" href="/favicon-v1.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kokona-Radio">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -25,10 +29,18 @@
     z-index: 0;
     background-position: center;
     background-size: cover;
-    filter: blur(110px) saturate(1.35) brightness(0.55);
+
+    filter: brightness(0.55) saturate(1.35);
     transform: scale(1.08);
-    transition: background-image 1.2s ease;
-    will-change: background-image;
+    background-color: #07070a;
+
+    opacity: 1;
+    transition: opacity 1.2s ease;
+  }
+
+  .bg.prev {
+    z-index: -1;
+    opacity: 0;
   }
 
   .shade {
@@ -201,8 +213,12 @@
   .track .fill {
     position: absolute;
     left: 0; top: 0; bottom: 0;
-    width: 0;
+    width: 100%;
+
+    transform: scaleX(0);
+    transform-origin: 0 50%;
     background: rgba(255,255,255,0.85);
+    will-change: transform;
   }
   .track .dot {
     position: absolute;
@@ -421,6 +437,31 @@
   var currentDuration = 0;
   var baseElapsed = 0;
   var baseAt = 0;
+
+  var SYNC_COUNT = null;
+
+  var audioEl = null;
+
+  var originPdt = 0;
+  var fragPdt = 0;
+  var fragStart = 0;
+  var lastPdtElapsed = 0;
+
+  function onFragChanged(frag) {
+    if (!frag || !frag.programDateTime) return;
+    fragPdt = frag.programDateTime;
+    fragStart = (typeof frag.start === 'number') ? frag.start : 0;
+  }
+
+  function elapsedFromFrag() {
+    if (!originPdt || !fragPdt || !audioEl) return null;
+    var cur = audioEl.currentTime;
+    if (!isFinite(cur)) return null;
+    var e = (fragPdt + (cur - fragStart) * 1000 - originPdt) / 1000;
+    if (!isFinite(e)) return null;
+    lastPdtElapsed = e;
+    return e;
+  }
   var lyrics = [];
   var activeLine = -1;
   var started = false;
@@ -448,41 +489,68 @@
   }
 
   function parseLRC(text) {
-    if (!text) return [];
-    var out = [];
-    var tagRe = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
-    var lines = text.split(/\r?\n/);
+  if (!text) return [];
+  var out = [];
+  var tagSource = '\\[(\\d{1,3}):(\\d{1,2})(?:[.:](\\d{1,3}))?\\]';
+  var lines = text.split(/\r?\n/);
+  var offsetRe = /^\s*\[offset:\s*([+-]?\d+)\s*\]\s*$/i;
+  var fullTag = new RegExp(tagSource, 'g');
+  var offsetMs = 0;
 
-    for (var i = 0; i < lines.length; i++) {
-      var raw = lines[i];
+  function toSec(mm, ss, fr) {
+    var frac = fr ? parseInt((fr + '00').slice(0, 3), 10) / 1000 : 0;
+    return parseInt(mm, 10) * 60 + parseInt(ss, 10) + frac;
+  }
 
-      tagRe.lastIndex = 0;
-      var firstTime = -1;
-      var m;
-      while ((m = tagRe.exec(raw)) !== null) {
-        var mm = parseInt(m[1], 10);
-        var ss = parseInt(m[2], 10);
-        var fracRaw = m[3] || '';
-        var frac = fracRaw ? parseInt((fracRaw + '00').slice(0, 3), 10) / 1000 : 0;
-        var t = mm * 60 + ss + frac;
-        if (firstTime < 0) firstTime = t;
-      }
-      if (firstTime < 0) continue;
+  for (var i = 0; i < lines.length; i++) {
+    var raw = lines[i];
 
-      tagRe.lastIndex = 0;
-      var content = raw.replace(tagRe, '').trim();
-      if (!content) continue;
-
-      out.push({ t: firstTime, text: content });
+    var om = offsetRe.exec(raw);
+    if (om) {
+      offsetMs = parseInt(om[1], 10) || 0;
+      continue;
     }
 
-    return out.sort(function (a, b) { return a.t - b.t; });
+    var tags = [];
+    var m;
+    fullTag.lastIndex = 0;
+    while ((m = fullTag.exec(raw)) !== null) {
+      tags.push({ start: m.index, end: m.index + m[0].length, t: toSec(m[1], m[2], m[3]) });
+    }
+    if (!tags.length) continue;
+
+    var leaderEnd = 0;
+    for (var a = 0; a < tags.length; a++) {
+      if (tags[a].start === leaderEnd) leaderEnd = tags[a].end;
+      else break;
+    }
+    var allLeading = leadersAllLeading(tags, leaderEnd);
+
+    var content = raw.replace(fullTag, '').replace(/\s+/g, ' ').trim();
+    if (!content) continue;
+
+    if (allLeading) {
+      for (var k = 0; k < tags.length; k++) out.push({ t: tags[k].t, text: content });
+    } else {
+      out.push({ t: tags[0].t, text: content });
+    }
+  }
+
+  if (offsetMs) {
+    for (var j = 0; j < out.length; j++) out[j].t = Math.max(0, out[j].t - offsetMs / 1000);
+  }
+  return out.sort(function (x, y) { return x.t - y.t; });
+  }
+
+  function leadersAllLeading(tags, leaderEnd) {
+  return leaderEnd === tags[tags.length - 1].end;
   }
 
   function renderLyrics() {
     lyricsInner.innerHTML = '';
     lyricsInner.style.transform = 'translateY(0)';
     activeLine = -1;
+    lyricsOffsets = [];
     if (!lyrics.length) {
       var d = document.createElement('div');
       d.className = 'ln blank';
@@ -496,6 +564,8 @@
       el.textContent = lyrics[i].text;
       lyricsInner.appendChild(el);
     }
+
+    cacheLyricOffsets();
   }
 
   function updateLyric(elapsed) {
@@ -511,22 +581,50 @@
       if (j === idx) kids[j].classList.add('on');
       else kids[j].classList.remove('on');
     }
+
     if (idx >= 0 && kids[idx]) {
-      var el = kids[idx];
-      var y = el.offsetTop + el.offsetHeight / 2 - lyricsBox.clientHeight / 2;
+      if (lyricsOffsets.length !== kids.length) cacheLyricOffsets();
+      var y = lyricsOffsets[idx] - lyricsHalfHeight;
       lyricsInner.style.transform = 'translateY(' + (-y) + 'px)';
     } else {
       lyricsInner.style.transform = 'translateY(0)';
     }
   }
 
-  function updateProgress(elapsed) {
-    elapsedEl.textContent = fmt(elapsed);
-    durationEl.textContent = fmt(currentDuration);
-    var p = currentDuration > 0 ? Math.min(1, elapsed / currentDuration) : 0;
-    var pct = (p * 100).toFixed(3) + '%';
-    fillEl.style.width = pct;
-    dotEl.style.left = pct;
+  var lyricsOffsets = [];
+  var lyricsHalfHeight = 0;
+  function cacheLyricOffsets() {
+    var kids = lyricsInner.children;
+    lyricsOffsets = new Array(kids.length);
+    for (var i = 0; i < kids.length; i++) {
+      lyricsOffsets[i] = kids[i].offsetTop + kids[i].offsetHeight / 2;
+    }
+    lyricsHalfHeight = lyricsBox.clientHeight / 2;
+  }
+
+  var lastShownElapsed = -1;
+  var lastPctAt = 0;
+  var lastShownP = -1;
+
+  function updateProgress(elapsed, force) {
+    var sec = Math.floor(elapsed);
+
+    if (force || sec !== lastShownElapsed) {
+      lastShownElapsed = sec;
+      elapsedEl.textContent = fmt(sec);
+      durationEl.textContent = fmt(currentDuration);
+    }
+
+    var nowMs = (window.performance && performance.now) ? performance.now() : Date.now();
+    if (force || nowMs - lastPctAt >= 100) {
+      lastPctAt = nowMs;
+      var p = currentDuration > 0 ? Math.min(1, elapsed / currentDuration) : 0;
+      if (Math.abs(p - lastShownP) > 0.0005) {
+        lastShownP = p;
+        fillEl.style.transform = 'scaleX(' + p.toFixed(4) + ')';
+        dotEl.style.left = (p * 100).toFixed(2) + '%';
+      }
+    }
     updateLyric(elapsed);
   }
 
@@ -534,7 +632,8 @@
     lyrics = [];
     renderLyrics();
     try {
-      var r = await fetch('/lyrics/' + id, { cache: 'no-store' });
+
+      var r = await fetch('/lyrics/' + id);
       if (r.ok) {
         var text = await r.text();
         lyrics = parseLRC(text);
@@ -543,35 +642,55 @@
     renderLyrics();
   }
 
+  var bgPrev = document.createElement('div');
+  bgPrev.className = 'bg prev';
+  bg.parentNode.insertBefore(bgPrev, bg);
+  var bgShowing = bg;
+
   function setCover(id, hasCover) {
     if (!hasCover) {
       cover.classList.remove('on');
       cover.removeAttribute('src');
       bg.style.backgroundImage = 'none';
+      bgPrev.style.backgroundImage = 'none';
       return;
     }
     var src = '/cover/' + id;
-    var probe = new Image();
-    probe.onload = function () {
-      cover.src = src;
+
+    var bgSrc = '/cover-blur/' + id;
+
+    cover.onload = function () {
       cover.classList.add('on');
-      bg.style.backgroundImage = 'url("' + src + '")';
+      var next = (bgShowing === bg) ? bgPrev : bg;
+      next.style.backgroundImage = 'url("' + bgSrc + '")';
+      next.style.zIndex = '0';
+      bgShowing.style.zIndex = '-1';
+      bgShowing.style.opacity = '0';
+      next.style.opacity = '1';
+      var old = bgShowing;
+      bgShowing = next;
+      setTimeout(function () {
+        if (bgShowing === next) old.style.backgroundImage = 'none';
+      }, 1300);
     };
-    probe.onerror = function () {
+    cover.onerror = function () {
       cover.classList.remove('on');
       bg.style.backgroundImage = 'none';
+      bgPrev.style.backgroundImage = 'none';
     };
-    probe.src = src;
+    cover.src = src;
   }
 
   async function poll() {
     try {
+
       var r = await fetch('/api/status?sid=' + encodeURIComponent(SID), { cache: 'no-store' });
       if (!r.ok) return;
       var d = await r.json();
 
       listenersEl.textContent = d.listeners != null ? d.listeners : 0;
       if (typeof d.notice === 'string') showNotice(d.notice);
+      if (typeof d.syncCount === 'number' && d.syncCount > 0) SYNC_COUNT = d.syncCount;
 
       if (!d.playing || !d.track) {
         return;
@@ -584,27 +703,92 @@
         artistEl.textContent = t.artist || '';
         setCover(t.id, !!t.hasCover);
         loadLyrics(t.id);
+        updateMediaSession(t);
+
+        originPdt = 0;
+        fragPdt = 0;
       }
 
       currentDuration = t.duration || 0;
       baseElapsed = d.elapsed || 0;
       baseAt = performance.now();
 
-      updateProgress(baseElapsed);
+      if (typeof d.originPdt === 'number' && d.originPdt > 0) originPdt = d.originPdt;
+
+      updateProgress(effectiveElapsed());
     } catch (e) {}
+  }
+
+  function effectiveElapsed() {
+    var e = elapsedFromFrag();
+    if (e === null) {
+      if (!baseAt) return 0;
+      e = baseElapsed + (performance.now() - baseAt) / 1000;
+    }
+    if (e < 0) e = 0;
+    if (currentDuration > 0 && e > currentDuration) e = currentDuration;
+    return e;
   }
 
   function rafLoop() {
     if (baseAt) {
-      var since = (performance.now() - baseAt) / 1000;
-      var e = currentDuration > 0
-        ? Math.min(baseElapsed + since, currentDuration)
-        : baseElapsed + since;
-      updateProgress(e);
+      updateProgress(effectiveElapsed());
     }
     requestAnimationFrame(rafLoop);
   }
   requestAnimationFrame(rafLoop);
+
+  var DEBUG = /[?&]debug=1\b/.test(location.search);
+  var dbgEl = null;
+
+  function debugOverlay() {
+    if (!dbgEl) {
+      dbgEl = document.createElement('div');
+      dbgEl.style.cssText =
+        'position:fixed;right:8px;bottom:8px;z-index:9999;' +
+        'font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;' +
+        'background:rgba(0,0,0,.72);color:#8ef;padding:6px 9px;' +
+        'border-radius:6px;white-space:pre;pointer-events:none';
+      document.body.appendChild(dbgEl);
+    }
+    return dbgEl;
+  }
+
+  function debugTick() {
+    var cur = audioEl ? audioEl.currentTime : null;
+    var srv = baseElapsed + (baseAt ? (performance.now() - baseAt) / 1000 : 0);
+    var pdtAvail = !!(originPdt && fragPdt && audioEl && isFinite(cur));
+    var pdt = pdtAvail
+      ? (fragPdt + (cur - fragStart) * 1000 - originPdt) / 1000
+      : null;
+    var lag = pdtAvail ? Date.now() - (fragPdt + (cur - fragStart) * 1000) : null;
+
+    debugOverlay().textContent =
+      'srv  ' + srv.toFixed(2) + ' s\n' +
+      'pdt  ' + (pdt === null ? '(无)' : pdt.toFixed(2) + ' s') + '\n' +
+      'diff ' + (pdt === null ? '-' : (pdt - srv).toFixed(2) + ' s') + '\n' +
+      'lag  ' + (lag === null ? '-' : Math.round(lag) + ' ms') + '\n' +
+      'used ' + effectiveElapsed().toFixed(2) + ' s';
+
+    var q = '/api/debug/report?tid=' + encodeURIComponent(currentId || '') +
+      '&org=' + Math.round(originPdt || 0) +
+      '&pdt=' + Math.round(fragPdt || 0) +
+      '&st=' + (fragStart || 0).toFixed(3) +
+      '&cur=' + (isFinite(cur) ? cur.toFixed(3) : '') +
+      '&se=' + srv.toFixed(3) +
+      '&pe=' + (pdt === null ? '' : pdt.toFixed(3)) +
+      '&sh=' + effectiveElapsed().toFixed(3) +
+      '&lag=' + (lag === null ? '' : Math.round(lag)) +
+      '&rs=' + (audioEl ? audioEl.readyState : -1);
+    fetch(q, { cache: 'no-store' }).catch(function () {});
+  }
+
+  if (DEBUG) setInterval(debugTick, 2000);
+
+  window.addEventListener('resize', function () {
+    if (lyrics.length) cacheLyricOffsets();
+    activeLine = -2;
+  });
 
   function tickClock() {
     var d = new Date();
@@ -619,14 +803,18 @@
     var audio = new Audio();
     audio.crossOrigin = 'anonymous';
     audio.preload = 'auto';
+    audioEl = audio;
+    setupMediaSession();
 
     var url = '/stream/stream.m3u8';
 
     if (window.Hls && window.Hls.isSupported()) {
+
+      var lsdc = (typeof SYNC_COUNT === 'number' && SYNC_COUNT > 0) ? SYNC_COUNT : 2;
       hlsInstance = new window.Hls({
         liveDurationInfinity: true,
-        liveSyncDurationCount: 2,
-        liveMaxLatencyDurationCount: 4,
+        liveSyncDurationCount: lsdc,
+        liveMaxLatencyDurationCount: lsdc + 2,
         maxLiveSyncPlaybackRate: 1.5,
         manifestLoadingMaxRetry: 30,
         manifestLoadingRetryDelay: 1500,
@@ -637,6 +825,10 @@
       hlsInstance.attachMedia(audio);
       hlsInstance.on(window.Hls.Events.MANIFEST_PARSED, function () {
         audio.play().catch(function () {});
+      });
+
+      hlsInstance.on(window.Hls.Events.FRAG_CHANGED, function (evt, data) {
+        onFragChanged(data && data.frag);
       });
       hlsInstance.on(window.Hls.Events.ERROR, function (evt, data) {
         if (!data || !data.fatal) return;
@@ -651,6 +843,7 @@
         }
       });
     } else if (audio.canPlayType('application/vnd.apple.mpegurl')) {
+
       audio.src = url;
       audio.play().catch(function () {});
       audio.addEventListener('error', function () {
@@ -660,6 +853,47 @@
         }, 3000);
       });
     }
+  }
+
+  function setupMediaSession() {
+    if (!('mediaSession' in navigator)) return;
+    var ms = navigator.mediaSession;
+    try {
+      ms.setActionHandler('play', function () {
+        if (audioEl) audioEl.play().catch(function () {});
+      });
+      ms.setActionHandler('pause', function () {
+        if (audioEl) audioEl.pause();
+      });
+      ms.setActionHandler('stop', function () {
+        if (audioEl) audioEl.pause();
+      });
+
+      ['previoustrack', 'nexttrack', 'seekbackward', 'seekforward', 'seekto'].forEach(function (a) {
+        try { ms.setActionHandler(a, null); } catch (e) {}
+      });
+    } catch (e) {}
+  }
+
+  function updateMediaSession(t) {
+    if (t) {
+      document.title = (t.title || '未知曲目') +
+        (t.artist ? ' - ' + t.artist : '') + ' · Kokona-Radio';
+    }
+    if (!('mediaSession' in navigator) || !window.MediaMetadata || !t) return;
+    try {
+      navigator.mediaSession.metadata = new window.MediaMetadata({
+        title: t.title || '未知曲目',
+        artist: t.artist || '',
+        album: t.album || '',
+        artwork: t.hasCover ? [{
+          src: location.origin + '/cover/' + t.id,
+          sizes: '512x512',
+          type: 'image/jpeg',
+        }] : [],
+      });
+      navigator.mediaSession.playbackState = 'playing';
+    } catch (e) {}
   }
 
   var enterReady = false;
