@@ -1,0 +1,24 @@
+# 编辑器统一约定。这个文件不需要任何依赖，VS Code / JetBrains / Sublime
+# 原生读取，Vim 与 Neovim 装 editorconfig 插件即可。
+# 它只约束「以后怎么编辑」，不会重排已有代码；已有代码的规整交给 git 提交。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Markdown 里行尾两个空格是硬换行，不能删
+[*.md]
+trim_trailing_whitespace = false
+
+[Makefile]
+indent_style = tab
+
+# 第三方压缩产物，别让编辑器去格式化它
+[public/hls.min.js]
+insert_final_newline = false
+trim_trailing_whitespace = false
