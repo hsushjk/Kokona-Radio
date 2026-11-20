@@ -1,0 +1,46 @@
+{
+
+  // 本 json 仅为示例文件，标准 json 不支持注释，直接使用会导致标准解析器报错，请另开 config.json
+
+  // ── 路径 ────────────────────────────────────────────────
+  "port": 3003,                        // 监听端口
+  "musicDir": "/opt/radio/music",      // 音乐目录，递归扫描
+  "hlsDir": "/opt/radio/hls",          // HLS 切片输出目录；每次启动会清空
+  "publicDir": "/www/wwwroot/radio",   // 前端静态文件目录
+  "fifoPath": "/tmp/radio-pcm.fifo",   // 子 ffmpeg 写裸 PCM、主 ffmpeg 读的管道
+  "ffmpegPath": "/usr/bin/ffmpeg",     // 只写 "ffmpeg" 则走 PATH
+  "ffprobePath": "/usr/bin/ffprobe",   // 同上
+  "cachePath": "cache/cache.json",     // 元数据缓存，不存在会自动建
+  "noticePath": "/opt/radio/notice.json", // 系统通知数据，不存在会自动建
+
+  // ── 音频 ────────────────────────────────────────────────
+  "bitrate": "192k",                   // AAC 输出码率，128k~256k
+  "sampleRate": 44100,                 // 输出采样率
+
+  // ── 时间轴（改这里会动到歌词对齐，谨慎）──────────────────
+  "hlsTime": 2,                        // 单个切片秒数。越小延迟越低、切片越碎
+  "hlsListSize": 6,                    // m3u8 保留切片数。和 hlsTime 一起决定观众落后直播多久
+  "hlsStartNumberSource": "epoch",     // 切片序号用 Unix 时间戳。重启后单调递增，不会序号回退导致集体 404。需 ffmpeg 4.3+
+  "liveSyncDurationCount": 2,          // 必须和 index.html 里 hls.js 的同名参数一致，否则服务端算的播放点会和浏览器听到的错开
+  "streamDelay": 0,                    // 额外保险（秒）。正常别动——真实位置由 m3u8 的 PROGRAM-DATE-TIME 推算
+  "playlistCacheMs": 250,              // m3u8 内存缓存毫秒。越小越实时、回源越多
+
+  // ── 曲库 ────────────────────────────────────────────────
+  "shuffle": true,                     // 每轮是否打乱
+  "scanInterval": 300000,              // 曲库重扫间隔（毫秒）。未变更文件直接读缓存，不会重新 ffprobe
+
+  // ── 封面 ────────────────────────────────────────────────
+  "coverMaxWidth": 512,                // 抽封面宽度
+  "coverCacheEntries": 64,             // 封面内存缓存条数（LRU）
+  "coverCacheBytes": 33554432,         // 封面内存缓存字节上限（32MB）
+  "coverTimeoutMs": 8000,              // 抽封面/量响度超时
+
+  // ── 响度归一化 ──────────────────────────────────────────
+  "loudnessEnabled": true,             // 关掉就完全不测量、不加增益
+  "loudnessTarget": -16,               // 目标积分响度 LUFS。音乐常见 -16~-14
+  "loudnessMaxGain": 12,               // 单曲最大增益 dB，防止把老音频拉爆
+
+  // ── 控制面板 ────────────────────────────────────────────
+  "controlPath": "control",            // 面板路径。改复杂可降低被扫到的概率，不要对外泄露
+  "controlToken": "1234567890passwd"   // 至少 16 位。留空 = 整个控制面板静默禁用，不要对外泄露
+}
