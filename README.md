@@ -7,12 +7,15 @@
 ## 特性
 
 - 所有听众进度一致。任何人任何时候接入，听到的都是服务器当前正在播的位置
-- 听众离开、刷新、关闭，服务器照常播放，进度不重置
-- 使用 `.m3u8`，fb2k / VLC 可直接打开
+- 听众离开、刷新，服务器照常播放，进度不重置
+- 兼容 `.m3u8`，fb2k / VLC 可直接打开
+- **Icecast 兼容统计端点** `/status-json.xsl`
 - 元数据全部来自音频文件标签。标题、艺术家、专辑、封面、歌词都不需要文件命名约定，歌词优先读内嵌字段，回退到同名 `.lrc`
+- **响度归一化**。后台用 EBU R128 测一遍整库的真实响度，播放时补一个静态增益，让不同专辑之间的音量不再一大一小
 - 控制面板。路径和 token 均可配置，支持上一首 / 下一首、查看待播队列、已播历史、在线听众
 - 系统通知。支持 `<br>`、`<b>`、`<strong>`、`<i>`语法并通过控制面板编辑
 - PWA 支持
+- Media Session 支持。手机锁屏、耳机线控、系统媒体卡片能显示曲目信息并暂停/继续
 
 ## 架构
 
@@ -29,36 +32,12 @@
 ## 最小配置要求
 
 - 双核CPU
-
-ffmpeg性能开销比较大，性能有限可以尝试进行以下优化(按照优先级从高到低排序)：
-
-- 编辑 server.js：找到'-c:a', 'aac',，将'aac'改为'libmp3lame'
-- 编辑 config.json：稍微降低"bitrate"
-- 编辑 server.js：在主 ffmpeg 参数里加：'-threads', '1', 副ffmpeg也可以加
-- 编辑 config.json：稍微提高"hlsTime"
-- 编辑 config.json：将"sampleRate"改成44100，并统一音频文件采样率为44100
+- Linux
 
 ## 依赖
 
-- Node.js 18 或更高
-- ffmpeg 与 ffprobe
-
-## 目录结构
-
-```
-/
-├── server.js            # 后端
-├── config.json          # 配置文件
-├── music/               # 音乐文件，支持子目录
-├── hls/                 # 运行时生成的切片
-└── public/              # 前端
-    ├── index.html
-    ├── hls.min.js       # hls音频库
-    ├── generate-pwa.sh  # pwa生成脚本
-    └── favicon-v1.png   # 自备图标
-```
-
-- hls.min.js 用于给浏览器补上 HLS 播放能力，采用 Apache License 2.0 许可证发布，[video-dev/hls.js](https://github.com/video-dev/hls.js)
+- Node.js 18+
+- ffmpeg 与 ffprobe（4.3+）
 
 ## 部署
 
@@ -71,6 +50,8 @@ cd kokona-radio
 
 # 配置 config.json ，存放音乐到 music
 
+参照[配置说明](#配置说明) 或 `config.example.json`
+
 # 生成 PWA（可选）
 
 ```bash
@@ -79,7 +60,7 @@ chmod +x generate-pwa.sh
 ./generate-pwa.sh
 ```
 
-按提示输入标题、简称、主题色、背景色、图标路径，回车使用默认值。脚本会生成 `index.json`、`manifest.json`、`sw.js`
+按提示输入标题、简称、主题色、背景色，回车使用默认值。脚本会生成 `index.json`、`manifest.json`
 
 # 启动后端
 
@@ -90,26 +71,98 @@ node server.js
 
 # Nginx 反代
 
-站点配置里加：
+支持反代，但要注意：
 
-```nginx
-location / {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_buffering off;
-    proxy_cache off;
-    proxy_read_timeout 3600s;
-    proxy_send_timeout 3600s;
+- `proxy_buffering off` 必须加。HLS 是流式切片，缓冲会破坏on air体验。
+- 如果使用 Cloudflare，请关闭 Rocket Loader 和 Auto Minify（JS / CSS / HTML 全部关掉）。这两项会改写页面内联脚本，可能导致控制面板按钮无响应。建议为 `面板路径` 添加 Page Rule：Cache Level 设为 Bypass，Disable Performance，Disable Apps。本项目已经尽量避免这种情况并尽量兼容
+
+## 缓存策略
+
+服务端按资源类型分别下发 `Cache-Control`，方便 CDN 分层缓存：
+
+| 路径 | Cache-Control |
+|---|---|
+| `/static/*`、顶层 `.js/.css/.png/...` | `public, max-age=31536000, immutable` |
+| `/stream/*.ts` | `public, max-age=31536000, immutable` |
+| `/cover/:id`、`/cover-blur/:id` | `public, max-age=86400`（带 `ETag`） |
+| `/`、`/index.html`、`*.json`、`*.txt` | `no-cache`（带 `ETag`，可 304） |
+| `/stream/stream.m3u8` | `no-cache`（服务端内存缓存 250ms，回源压力小） |
+| `/api/*` | `no-store` |
+
+切片文件名带递增序号且内容不可变，所以可以长缓存；m3u8 是实时的，必须每次回源。
+
+网页背景用的是 `/cover-blur/:id`——服务端预生成的 96×96 已模糊小图（约 0.5 KB）
+
+## 健康检查
+
+`GET /healthz` 返回（无需鉴权）：
+
+```json
+{"ok":true,"healthy":true,"uptime":1234,"mainFfmpeg":true,"ffmpegRestarts":0,
+ "writeStalls":0,"lastStallMs":0,"librarySize":861,"listeners":2,
+ "current":"a1b2c3d4e5f6a7b8","rssMB":78,"loudness":{"active":true,"done":12,"total":861}}
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `ok` | 后端进程存活 |
+| `healthy` | 音频链路健康（主编码器在跑）。`ok` 为 true 但 `healthy` 为 false = 进程在、声音没了 |
+| `ffmpegRestarts` | 主编码器累计重启次数。**持续增长说明在崩溃循环** |
+| `writeStalls` | 写 FIFO 被背压卡住超过 500ms 的次数。增长说明主编码器跟不上实时，通常伴随掉音 |
+| `lastStallMs` | 上面那次具体卡了多久 |
+| `rssMB` | 进程常驻内存。长期单调上涨就是内存泄漏 |
+| `loudness` | 响度补测进度，补测完 `active` 变 `false` |
+
+此接口也内嵌在控制面板里
+
+## Icecast 兼容统计
+
+`GET /status-json.xsl`（别名 `/status-json`）返回 Icecast 2 的 `icestats` 结构，无需鉴权：
+
+```json
+{
+  "icestats": {
+    "admin": "Kokona-Radio",
+    "host": "radio.kokona.org",
+    "location": "",
+    "server_id": "Kokona-Radio",
+    "server_start": "Thu, 20 Nov 2026 12:04:16 GMT",
+    "server_start_iso8601": "2026-11-20T12:04:16.000Z",
+    "source": {
+      "audio_info": "bitrate=192;samplerate=44100;channels=2",
+      "bitrate": 192,
+      "genre": "",
+      "ice-bitrate": 192,
+      "listener_peak": 2,
+      "listeners": 2,
+      "server_description": "",
+      "server_name": "Kokona-Radio",
+      "server_type": "audio/mpeg",
+      "server_url": "",
+      "source_ip": "127.0.0.1",
+      "stream_start": "Thu, 20 Nov 2026 12:04:16 GMT",
+      "stream_start_iso8601": "2026-11-20T12:04:16.000Z",
+      "title": "AWOLNATION - Sail"
+    }
+  }
 }
 ```
 
-注意：
+| 字段 | 说明 |
+|---|---|
+| `icestats.host` | 取自请求头 `Host`，反代后即面板看到的域名 |
+| `icestats.server_start` / `server_start_iso8601` | 本进程启动时刻，不是开播时刻 |
+| `source.listeners` / `listener_peak` | 当前在线听众数，与 `/api/status` 的 `listeners` 同源 |
+| `source.bitrate` / `ice-bitrate` | 由 `bitrate` 推出的整数，单位 kbps |
+| `source.audio_info` | `bitrate=…;samplerate=…;channels=2`，采样率取 `sampleRate` |
+| `source.title` | `艺术家 - 曲名`，无艺术家时只有曲名。每次请求现算，不是 ICY 元数据 |
+| `source.stream_start` / `stream_start_iso8601` | 当前曲目开始时刻 |
+| `source.server_type` | 固定 `audio/mpeg`，只为兼容读这个字段的脚本 |
+| `source` | 没有在播曲目时为 `[]`（空数组），与 Icecast 行为一致 |
 
-- `proxy_buffering off` 必须加。HLS 是流式切片，缓冲会破坏on air体验。
-- 如果使用 Cloudflare，请关闭 Rocket Loader 和 Auto Minify（JS / CSS / HTML 全部关掉）。这两项会改写页面内联脚本，可能导致控制面板按钮无响应。建议为 `/ctrl` 路径添加 Page Rule：Cache Level 设为 Bypass，Disable Performance，Disable Apps。本项目已经尽量避免这种情况并尽量兼容
+- 这个接口是给监控、脚本和「判断这是不是一个网络电台」的工具做兼容用的，与音频传输方式无关。本站走 HLS，不提供 ICY 直推流，`server_type` 只是名义值
+- 只读、无副作用，不触达曲库与 ffmpeg，可以和 `/healthz` 一起交给监控轮询
+- 外部播放器（fb2k / VLC）读的是 ICY 的 `StreamTitle`，不是这个接口，所以它不会让播放器显示曲名
 
 ## 配置说明
 
@@ -117,24 +170,39 @@ location / {
 
 ```json
 {
-  "port": 3000,
+  "port": 3003,
   "musicDir": "/opt/radio/music",
   "hlsDir": "/opt/radio/hls",
-  "publicDir": "/opt/radio/public",
+  "publicDir": "/www/wwwroot/radio",
   "fifoPath": "/tmp/radio-pcm.fifo",
   "ffmpegPath": "/usr/bin/ffmpeg",
   "ffprobePath": "/usr/bin/ffprobe",
+  "cachePath": "cache/cache.json",
+  "noticePath": "/opt/radio/notice.json",
   "bitrate": "192k",
   "sampleRate": 44100,
   "hlsTime": 2,
   "hlsListSize": 6,
+  "hlsStartNumberSource": "epoch",
+  "liveSyncDurationCount": 2,
+  "streamDelay": 0,
+  "playlistCacheMs": 250,
   "shuffle": true,
-  "streamDelay": 5,
-  "controlPath": "ctrl",
-  "controlToken": "1234567890passwd",
-  "noticePath": "/opt/radio/notice.json"
+  "scanInterval": 300000,
+  "coverMaxWidth": 512,
+  "coverCacheEntries": 64,
+  "coverCacheBytes": 33554432,
+  "coverTimeoutMs": 8000,
+  "loudnessEnabled": true,
+  "loudnessTarget": -16,
+  "loudnessMaxGain": 12,
+  "controlPath": "control",
+  "controlToken": "1234567890passwd"
 }
 ```
+
+> `controlToken` 必须自己填，长度至少 16 位。留空则控制面板整个禁用。
+> `config.example.json` 里的 token 只是占位示例；仓库不再附带 `config.json`，直接照抄示例上线等于公开凭据。
 
 | 字段 | 说明 |
 |---|---|
@@ -143,33 +211,55 @@ location / {
 | `hlsDir` | HLS 切片输出目录，每次启动清空 |
 | `publicDir` | 前端静态文件目录 |
 | `fifoPath` | PCM 管道路径 |
-| `ffmpegPath` / `ffprobePath` | 二进制绝对路径 |
+| `ffmpegPath` / `ffprobePath` | 二进制绝对路径；只写 `ffmpeg` / `ffprobe` 则走 PATH |
+| `cachePath` | 元数据缓存文件。键为 `路径\|mtime\|大小`，命中即跳过 ffprobe。目录或文件不存在时自动创建；删掉它只会让下次扫描变慢 |
+| `noticePath` | 通知数据文件路径。目录或文件不存在时自动创建 |
 | `bitrate` | AAC 输出码率，建议 128k 至 256k |
 | `sampleRate` | 输出采样率 |
 | `hlsTime` | 单个切片秒数。越小延迟越低，切片越碎 |
-| `hlsListSize` | m3u8 保留的切片数 |
+| `hlsListSize` | m3u8 保留的切片数。和 `hlsTime` 一起决定观众落后直播多久 |
+| `hlsStartNumberSource` | 切片序号来源，默认 `epoch`（Unix 时间戳）。重启后序号单调递增，客户端不会因为序号回退而集体 404。需要 ffmpeg 4.3+ |
+| `liveSyncDurationCount` | 必须和前端 `index.html` 里 hls.js 的同名参数一致（默认 2）。改了它，服务端算出的播放点就会和浏览器实际听到的位置错开 |
+| `streamDelay` | 额外的保险垫，单位秒，默认 0。**正常不需要改**——真实播放位置由 m3u8 的 `PROGRAM-DATE-TIME` 推算。只在观测到「歌词稳定偏早」时才加一点 |
+| `playlistCacheMs` | m3u8 内存缓存时间，默认 250。越小越实时、回源越多 |
 | `shuffle` | 是否每轮打乱曲库 |
-| `streamDelay` | UI 对齐补偿，单位秒。见下文 |
+| `scanInterval` | 曲库重扫间隔，毫秒，默认 300000（5 分钟）。未变更的文件直接读缓存 |
+| `coverMaxWidth` | 封面抽出宽度，默认 512 |
+| `coverCacheEntries` | 封面内存缓存条数（LRU），默认 64 |
+| `coverCacheBytes` | 封面内存缓存字节上限，默认 33554432（32 MB） |
+| `coverTimeoutMs` | 抽封面 / 量响度超时，默认 8000 |
+| `loudnessEnabled` | 是否启用响度归一化，默认 `true`。关掉就完全不测量、不加增益 |
+| `loudnessTarget` | 目标积分响度（LUFS），默认 -16。播客/音乐常见 -16 ~ -14 |
+| `loudnessMaxGain` | 单曲最大增益（dB），默认 12。防止把老录音拉满 |
 | `controlPath` | 控制面板路径。为空则禁用控制功能 |
 | `controlToken` | 控制面板 token。至少 16 位。为空则禁用控制功能 |
-| `noticePath` | 通知数据文件路径，文件不存在时自动创建 |
 
 ## 延迟对齐
 
-HLS 固有延迟 = `hlsTime × (客户端缓冲切片数 + 1) + 网络抖动`
+播放进度对齐**不需要手工调参**。
 
-`streamDelay`：客户端此刻播放的，是服务器 N 秒前送出去的内容。调整方法：
+服务器让 ffmpeg 给每个切片打上 `EXT-X-PROGRAM-DATE-TIME`，再用它反推客户端此刻在播哪一段
+音频；前端拿到 `frag.programDateTime` 后自己算片内进度，完全不依赖浏览器和服务器之间的时钟。
 
-- UI 落后于音频（音频已到 5 秒，UI 显示 3 秒）：调小 `streamDelay`
-- UI 超前于音频（UI 显示 5 秒，音频还在 3 秒）：调大 `streamDelay`
+`streamDelay` 只是给「想让歌词比声音稍晚一点」留的保险，正常填 `0`。想微调就填正数秒，
+比如 `0.3` 会让歌词晚 300 ms。
 
-每次改动 1 至 3 秒，重启后等 30 秒再听。两到三轮即可收敛到 ±2 秒内
+浏览器打开 `?debug=1` 会在右下角显示 `srv / pdt / diff / lag / used`，并把采样上报到
+`/api/debug/report`，排查时直接看 `/api/debug` 即可。
+
+| 字段 | 说明 |
+|---|---|
+| `srv` | 服务端推算值 |
+| `pdt` | 用 PDT 算出来的精确值 |
+| `diff` | 上面两个之差 |
+| `lag` | 听到的声音有多"旧" |
+| `used` | 最终用在界面上的值 |
 
 ## 控制面板
 
 配置 `controlPath` 和 `controlToken` 后，访问 `https://example.com/<controlPath>` 打开
 
-面板功能：
+面板基础功能：
 
 - 上一首：从已播历史中弹出最近一首，重新播放
 - 下一首：立即切换
@@ -179,7 +269,7 @@ HLS 固有延迟 = `hlsTime × (客户端缓冲切片数 + 1) + 网络抖动`
 
 鉴权通过 `X-Ctrl-Token` 请求头传递，使用 `crypto.timingSafeEqual` 比较。token 长度不足 16 位则整个控制功能禁用
 
-`controlPath` 也配置成不易猜测的字符串，避免扫描爆破
+`controlPath` 也配置成不易猜测的复杂字符串，避免扫描爆破
 
 ## 系统通知
 
@@ -187,7 +277,7 @@ HLS 固有延迟 = `hlsTime × (客户端缓冲切片数 + 1) + 网络抖动`
 
 ```json
 {
-  "text": "熙熙攘攘<br>我们的a大</b>。",
+  "text": "熙熙攘攘<br>我们的城市</b>。",
   "updatedAt": 1790773960198
 }
 ```
@@ -201,9 +291,7 @@ HLS 固有延迟 = `hlsTime × (客户端缓冲切片数 + 1) + 网络抖动`
 
 ## PWA
 
-执行 `public/generate-pwa.sh` 生成 PWA 配置文件。index.html加载时读取 `index.json` 动态设置标题、主题色、注册 service worker。浏览器地址栏会自动出现安装图标，无需在页面内添加安装按钮。
-
-`index.json` 不存在时，PWA 相关功能静默跳过，页面正常工作。
+执行 `public/generate-pwa.sh` 生成 PWA 配置文件。index.html加载时读取 `index.json` 动态设置标题、主题色、注册 service worker。浏览器地址栏一般会自动出现安装图标，无需在页面内添加安装按钮。
 
 ## 外部播放器
 
@@ -212,10 +300,6 @@ foobar2000 或 VLC 可直接打开：
 ```
 https://example.com/stream/stream.m3u8
 ```
-
-ffmpeg 可能需要额外安装组件
-
-注：HLS 协议不携带动态元数据，外部播放器不会显示当前曲目名称和封面，这是协议本身的限制
 
 ## 常见问题
 
@@ -229,7 +313,8 @@ ffmpeg 可能需要额外安装组件
 
 ### UI 与声音不同步
 
-调整 `streamDelay`。详见「延迟对齐」一节
+正常情况下不用管，服务端用 `PROGRAM-DATE-TIME` 自动对齐。如果确实偏了，先用 `?debug=1`
+看一眼 `diff`，再决定要不要给 `streamDelay` 加一点点。
 
 ### 切歌时出现上一首的声音
 
@@ -251,3 +336,8 @@ FLAC 与 M4A 的内嵌歌词能被 ffprobe 读取。MP3 的 USLT 帧 ffprobe 读
 ### 网太弱了，播放起来很卡
 
 http3和2来回切换一下试试，本项目不吃带宽，但怕丢包
+
+
+## 致谢
+
+- [video-dev/hls.js](https://github.com/video-dev/hls.js)，采用 Apache License 2.0 许可证发布，用于给浏览器补上 HLS 播放能力
