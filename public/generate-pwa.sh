@@ -3,10 +3,14 @@ set -e
 cd "$(dirname "$0")"
 
 DEFAULT_TITLE="Kokona-Radio"
-DEFAULT_SHORT="Radio"
+DEFAULT_SHORT="Kokona-Radio"
+DEFAULT_DESC="在线网络电台"
 DEFAULT_COLOR="#07070a"
-DEFAULT_ICON="/favicon-v1.png"
 DEFAULT_BG="#07070a"
+
+FAVICON="/favicon-v1.png"
+ICON192="/icon-192.png"
+ICON512="/icon-512.png"
 
 ask() {
   local prompt="$1"
@@ -39,45 +43,47 @@ echo ""
 
 TITLE=$(ask "标题" "$DEFAULT_TITLE")
 SHORT=$(ask "简称" "$DEFAULT_SHORT")
+DESC=$(ask "描述" "$DEFAULT_DESC")
 COLOR=$(ask "主题色-hex" "$DEFAULT_COLOR")
 BG=$(ask "背景色-hex" "$DEFAULT_BG")
-ICON=$(ask "图标路径(相对)" "$DEFAULT_ICON")
 
 echo ""
-
-ICON_FILE="${ICON#/}"
-if [ -f "$ICON_FILE" ]; then
-  ICON_STATUS="favicon存在"
-else
-  ICON_STATUS="favicon不存在${ICON}"
-fi
-
 echo "  审核："
 echo "    标题      $TITLE"
 echo "    简称      $SHORT"
+echo "    描述      $DESC"
 echo "    主题色    $COLOR"
 echo "    背景色    $BG"
-echo "    图标      $ICON  ($ICON_STATUS)"
+echo "    图标      $ICON192 / $ICON512"
 echo ""
 
-if ! confirm "写入 index.json / manifest.json / sw.js?"; then
+if ! confirm "写入 index.json / manifest.json?"; then
   echo "  已取消"
   exit 0
 fi
+
+for f in "icon-192.png" "icon-512.png" "favicon-v1.png"; do
+  if [ ! -f "$f" ]; then
+    echo "  ! 缺少 $f，PWA 图标会 404"
+  fi
+done
 
 cat > index.json <<EOF
 {
   "title": "$TITLE",
   "shortName": "$SHORT",
   "themeColor": "$COLOR",
-  "icon": "$ICON"
+  "icon": "$FAVICON"
 }
 EOF
 
 cat > manifest.json <<EOF
 {
+  "id": "/",
   "name": "$TITLE",
   "short_name": "$SHORT",
+  "description": "$DESC",
+  "lang": "zh-CN",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -85,21 +91,24 @@ cat > manifest.json <<EOF
   "background_color": "$BG",
   "theme_color": "$COLOR",
   "icons": [
-    { "src": "$ICON", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "$ICON", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+    { "src": "$ICON192", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "$ICON512", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "$ICON512", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
 EOF
 
-cat > sw.js <<'JSEOF'
+if [ ! -f sw.js ]; then
+  cat > sw.js <<'JSEOF'
 self.addEventListener('install', function(e) { self.skipWaiting(); });
 self.addEventListener('activate', function(e) { e.waitUntil(self.clients.claim()); });
 self.addEventListener('fetch', function(e) {});
 JSEOF
+  echo "  ! 未找到 sw.js"
+fi
 
 echo ""
 echo "  已生成："
 echo "    index.json"
 echo "    manifest.json"
-echo "    sw.js"
 echo ""
