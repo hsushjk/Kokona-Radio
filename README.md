@@ -332,15 +332,14 @@ https://example.com/stream/stream.m3u8
 
 这是音频时间线比真实时间快造成的，不是 bug。子 ffmpeg 的 `-re` 只做开环节流，实测整条链路
 每秒产出的音频比真实时间多 0.1%~0.2%，也就是每小时观众相对播放边缘落后 5~7 秒。前端的
-hls.js 配了 `liveSyncDurationCount: 2`（起播落后 2 片）和 `liveMaxLatencyDurationCount: 4`
-（落后 4 片 ≈ 8 秒就强制追平），所以大约每 35 分钟会被温柔地追一次：多数情况是用
+hls.js 配了 `liveSyncDurationCount: 2`（起播落后 2 片 = 4 秒）和 `liveMaxLatencyDurationCount: 8`
+（落后 8 片 = 16 秒才强制追平），所以大约每 1.5~2 小时会被温柔地追一次：多数情况是用
 `maxLiveSyncPlaybackRate: 1.5` 短暂加速，听感只是轻微变调；极端情况才是跳一下。
 
-想放宽这个频率，改两处：
-
-- `index.html` 里 `liveMaxLatencyDurationCount: lsdc + 2` → `lsdc + 6`（余量从 4 秒放宽到 12 秒）
-- `config.json` 里 `hlsListSize` 调大到 20 左右，让 m3u8 窗口（`hlsListSize × hlsTime`）足够容纳
-  放宽后的落后量。**`hlsListSize` 本身不降低延迟，也不影响对时**，它只决定窗口有多长
+想再放宽这个频率，可以继续加大 `liveMaxLatencyDurationCount`，同时把 `config.json` 里的
+`hlsListSize` 调大，让 m3u8 窗口（`hlsListSize × hlsTime`）装得下放宽后的落后量。当前部署用的是
+`hlsListSize: 20`（40 秒窗口）配 `liveMaxLatencyDurationCount: lsdc + 6`（16 秒阈值），
+窗口仍有一倍余量。**`hlsListSize` 本身不降低延迟，也不影响对时**，它只决定窗口有多长。
 
 注意 `liveSyncDurationCount` 不要动，它和 `config.json` 里的同名项必须一致，改了会让服务端
 算出的播放点和浏览器实际听到的位置错开。
