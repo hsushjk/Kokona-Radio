@@ -87,7 +87,7 @@ node server.js
 | `/cover/:id`、`/cover-blur/:id` | `public, max-age=86400`（带 `ETag`） |
 | `/`、`/index.html`、`*.json`、`*.txt` | `no-cache`（带 `ETag`，可 304） |
 | `/stream/stream.m3u8` | `no-cache`（服务端内存缓存 250ms，回源压力小） |
-| `/api/*` | `no-store` |
+| `/api/*`、`/healthz`、`/status-json.xsl` | `no-cache`（不带 ETag，每次回源取最新） |
 
 切片文件名带递增序号且内容不可变，所以可以长缓存；m3u8 是实时的，必须每次回源。
 
@@ -105,6 +105,11 @@ node server.js
 | --- | --- |
 | `ok` | 后端进程存活 |
 | `healthy` | 音频链路健康（主编码器在跑）。`ok` 为 true 但 `healthy` 为 false = 进程在、声音没了 |
+| `uptime` | 本进程已运行秒数，重启即归零 |
+| `mainFfmpeg` | 主编码器进程是否存在 |
+| `librarySize` | 当前曲库曲目数 |
+| `listeners` | 在线听众人数，与 `/api/status` 同源 |
+| `current` | 正在播的曲目 id，没有则为 `null` |
 | `ffmpegRestarts` | 主编码器累计重启次数。**持续增长说明在崩溃循环** |
 | `writeStalls` | 写 FIFO 被背压卡住超过 500ms 的次数。增长说明主编码器跟不上实时，通常伴随掉音 |
 | `lastStallMs` | 上面那次具体卡了多久 |
@@ -124,7 +129,7 @@ node server.js
     "host": "radio.kokona.org",
     "location": "",
     "server_id": "Kokona-Radio",
-    "server_start": "Thu, 20 Nov 2026 12:04:16 GMT",
+    "server_start": "Fri, 20 Nov 2026 12:04:16 GMT",
     "server_start_iso8601": "2026-11-20T12:04:16.000Z",
     "source": {
       "audio_info": "bitrate=192;samplerate=44100;channels=2",
@@ -138,7 +143,7 @@ node server.js
       "server_type": "audio/mpeg",
       "server_url": "",
       "source_ip": "127.0.0.1",
-      "stream_start": "Thu, 20 Nov 2026 12:04:16 GMT",
+      "stream_start": "Fri, 20 Nov 2026 12:04:16 GMT",
       "stream_start_iso8601": "2026-11-20T12:04:16.000Z",
       "title": "AWOLNATION - Sail"
     }
@@ -270,9 +275,8 @@ node server.js
 
 - 上一首：从已播历史中弹出最近一首，重新播放
 - 下一首：立即切换
-- 待播队列：查看完整队列
-- 已播历史：查看最近 500 首
-- 在线听众：按 sid 或 IP 统计，20 秒无请求判定掉线
+- 待播队列、已播历史、在线听众：分页查看（每页条数可在面板里调），已播历史最多保留最近 500 首
+- 听众统计：按 sid 或 IP，20 秒无请求判定掉线
 
 鉴权通过 `X-Ctrl-Token` 请求头传递，使用 `crypto.timingSafeEqual` 比较。token 长度不足 16 位则整个控制功能禁用
 
@@ -290,7 +294,7 @@ node server.js
 ```
 
 - `text` 为空字符串或文件不存在时，前端不显示通知框
-- 服务器每 5 分钟随音乐库一起重载一次。手动编辑文件后，最多 5 分钟内生效
+- 通知只在启动时读取一次，手动编辑文件后需要重启服务才生效
 - 通过控制面板保存则立即生效
 - 只放行 `<br>`、`<b>`、`<strong>`、`<i>` 四种标签，其余全部转义为纯文本
 - 文本中的换行符自动转为 `<br>`
@@ -343,7 +347,7 @@ hls.js 配了 `liveSyncDurationCount: 2`（起播落后 2 片）和 `liveMaxLate
 
 ### 切歌时出现上一首的声音
 
-说明可能是主 ffmpeg 被重启了。检查日志里是否有 `[main-ffmpeg exit]`。正常情况下主 ffmpeg 生命周期贯穿整个服务运行，只有崩溃才重启
+说明可能是主 ffmpeg 被重启了。检查日志里是否有 `[main-ffmpeg] exit code=`。正常情况下主 ffmpeg 生命周期贯穿整个服务运行，只有崩溃才重启
 
 ### 在线听众始终显示 1
 
