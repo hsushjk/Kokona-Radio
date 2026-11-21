@@ -727,6 +727,8 @@ function startMainFFmpeg() {
     if (mainFF === proc) mainFF = null;
     if (shutdown) return;
     statFfmpegRestarts++;
+    edgeClosedPdt = 0;
+    edgeClosedAt = 0;
 
     shiftFeedTimeline(Date.now() - proc.startedAt);
     if (restartTimer) clearTimeout(restartTimer);
@@ -794,8 +796,10 @@ function switchTo(track, opts) {
   currentStart = Date.now();
   pinCover(track.id);
 
+  const headPdt = audioHeadPdt(currentStart);
   feedTimeline.push({
     t: currentStart,
+    pdt: headPdt ? Math.round(headPdt + TRACK_START_LATENCY_MS) : 0,
     track: {
       id: track.id,
       title: track.title,
@@ -974,6 +978,8 @@ const TRACK_START_LATENCY_MS = 280;
 const driftSamples = [];
 let driftLastSig = null;
 let driftMs = null;
+let edgeClosedAt = 0;
+let edgeClosedPdt = 0;
 
 const clientReports = [];
 
@@ -995,9 +1001,11 @@ function noteSegmentClosed() {
   const segDur = pl.lastSegDur || CFG.hlsTime || 2;
 
   const edgePdt = pl.lastSegStart + segDur * 1000;
+  edgeClosedAt = now;
+  edgeClosedPdt = edgePdt;
   const sample = edgePdt - now;
 
-  if (sample > -SEG_POLL_MS * 2 && sample < 30000) {
+  if (sample > -60000 && sample < 6 * 3600 * 1000) {
     driftSamples.push(sample);
     if (driftSamples.length > 60) driftSamples.shift();
     driftMs = medianOf(driftSamples);
@@ -1008,6 +1016,22 @@ setInterval(noteSegmentClosed, SEG_POLL_MS).unref();
 
 function feedClockOffset() {
   return driftMs == null ? 0 : driftMs;
+}
+
+function audioHeadPdt(now) {
+  if (!edgeClosedPdt) return null;
+  return edgeClosedPdt + (now - edgeClosedAt);
+}
+
+function originPdtOf(entry, now) {
+  if (entry.pdt) return { pdt: entry.pdt, src: 'pdt' };
+  if (edgeClosedPdt) {
+    return {
+      pdt: Math.round(edgeClosedPdt + (entry.t - edgeClosedAt) + TRACK_START_LATENCY_MS),
+      src: 'extrapolated',
+    };
+  }
+  return { pdt: entry.t + feedClockOffset() + TRACK_START_LATENCY_MS, src: 'drift' };
 }
 
 function getClientTrack() {
@@ -1045,18 +1069,22 @@ function getClientTrack() {
   }
   if (!chosen) {
     const first = feedTimeline[0];
-    return { entry: first, elapsed: 0, dbg, originPdt: first.t + drift + TRACK_START_LATENCY_MS };
+    const op = originPdtOf(first, now);
+    dbg.originSrc = op.src;
+    return { entry: first, elapsed: 0, dbg, originPdt: op.pdt };
   }
   dbg.cutoff = cutoff;
   dbg.chosenT = chosen.t;
   dbg.cutoffMinusChosen = cutoff - chosen.t;
+  const op = originPdtOf(chosen, now);
+  dbg.originSrc = op.src;
   return {
     entry: chosen,
 
     elapsed: Math.max(0, (cutoff - chosen.t - TRACK_START_LATENCY_MS) / 1000),
     dbg,
 
-    originPdt: chosen.t + drift + TRACK_START_LATENCY_MS,
+    originPdt: op.pdt,
   };
 }
 

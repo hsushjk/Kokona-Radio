@@ -459,6 +459,8 @@
     if (!isFinite(cur)) return null;
     var e = (fragPdt + (cur - fragStart) * 1000 - originPdt) / 1000;
     if (!isFinite(e)) return null;
+    if (e < -20) return null;
+    if (currentDuration > 0 && e > currentDuration + 60) return null;
     lastPdtElapsed = e;
     return e;
   }
