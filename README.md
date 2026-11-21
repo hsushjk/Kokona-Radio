@@ -185,7 +185,7 @@ node server.js
   "bitrate": "192k",
   "sampleRate": 44100,
   "hlsTime": 2,
-  "hlsListSize": 6,
+  "hlsListSize": 20,
   "hlsStartNumberSource": "epoch",
   "liveSyncDurationCount": 2,
   "streamDelay": 0,
@@ -220,9 +220,9 @@ node server.js
 | `bitrate` | AAC 输出码率，建议 128k 至 256k |
 | `sampleRate` | 输出采样率 |
 | `hlsTime` | 单个切片秒数。起播延迟 ≈ `liveSyncDurationCount × hlsTime`，所以切片越短起播越快，但每秒要处理的文件也越多 |
-| `hlsListSize` | m3u8 保留的切片数，窗口长度 ≈ `hlsListSize × hlsTime`（默认 6×2 = 12 秒）。它**不决定起播延迟**（那由 `liveSyncDurationCount` 决定），只决定客户端能往回退多远：卡顿、切后台、暂停之后还能不能接着放 |
+| `hlsListSize` | m3u8 保留的切片数，窗口长度 ≈ `hlsListSize × hlsTime`（默认 20×2 = 40 秒）。它**不决定起播延迟**（那由 `liveSyncDurationCount` 决定），只决定客户端能往回退多远：卡顿、切后台、暂停之后还能不能接着放 |
 | `hlsStartNumberSource` | 切片序号来源，默认 `epoch`（Unix 时间戳）。重启后序号单调递增，客户端不会因为序号回退而集体 404。需要 ffmpeg 4.3+ |
-| `liveSyncDurationCount` | 观众起播时落后直播边缘几个切片，默认 2。必须和前端 `index.html` 里 hls.js 的同名参数一致，否则服务端算出的播放点会和浏览器实际听到的位置错开。前端另有 `liveMaxLatencyDurationCount`（默认 `lsdc + 2`）决定「落后超过多少就强制追平」，它只影响客户端行为，与对时无关 |
+| `liveSyncDurationCount` | 观众起播时落后直播边缘几个切片，默认 2。必须和前端 `index.html` 里 hls.js 的同名参数一致，否则服务端算出的播放点会和浏览器实际听到的位置错开。前端另有 `liveMaxLatencyDurationCount`（默认 `lsdc + 6`，即 8 片 = 16 秒）决定「落后超过多少就强制追平」，它只影响客户端行为，与对时无关 |
 | `streamDelay` | 额外的保险，单位秒，默认 0。**正常不需要改**——真实播放位置由 m3u8 的 `PROGRAM-DATE-TIME` 推算。只在观测到「歌词稳定偏早」时才加一点 |
 | `playlistCacheMs` | m3u8 内存缓存时间，默认 250。越小越实时、回源越多 |
 | `shuffle` | 是否每轮打乱曲库 |

@@ -19,7 +19,7 @@
 
   // ── 时间轴（改这里会动到歌词对齐，谨慎）──────────────────
   "hlsTime": 2,                        // 单个切片秒数。越小延迟越低、切片越碎
-  "hlsListSize": 6,                    // m3u8 保留切片数。和 hlsTime 一起决定观众落后直播多久
+  "hlsListSize": 20,                   // m3u8 保留切片数。窗口 ≈ hlsListSize × hlsTime（20×2 = 40 秒），不决定起播延迟，只决定客户端能回退多远
   "hlsStartNumberSource": "epoch",     // 切片序号用 Unix 时间戳。重启后单调递增，不会序号回退导致集体 404。需 ffmpeg 4.3+
   "liveSyncDurationCount": 2,          // 必须和 index.html 里 hls.js 的同名参数一致，否则服务端算的播放点会和浏览器听到的错开
   "streamDelay": 0,                    // 额外保险（秒）。正常别动——真实位置由 m3u8 的 PROGRAM-DATE-TIME 推算
