@@ -27,7 +27,6 @@
 
 - 主 ffmpeg 从命名管道读 PCM，输出 HLS
 - 切歌时只更换往 FIFO 写数据的子 ffmpeg。主 ffmpeg 无感，切片序号连续。
-- 服务端记录每首歌开始喂给主 ffmpeg 的时刻。`/api/status` 回溯 `streamDelay` 秒返回客户端此刻正在听的内容，使网页 UI 与耳机实际听到的进度对齐。
 
 ## 最小配置要求
 
@@ -41,18 +40,18 @@
 
 ## 部署
 
-# 克隆
+## 克隆
 
 ```bash
 git clone https://github.com/hsushjk/kokona-radio.git
 cd kokona-radio
 ```
 
-# 配置 config.json ，存放音乐到 music
+## 配置 config.json ，存放音乐到 music
 
 参照[配置说明](#配置说明) 或 `config.example.json`
 
-# 生成 PWA（可选）
+## 生成 PWA（可选）
 
 ```bash
 cd public
@@ -60,16 +59,16 @@ chmod +x generate-pwa.sh
 ./generate-pwa.sh
 ```
 
-按提示输入标题、简称、主题色、背景色，回车使用默认值。脚本会生成 `index.json`、`manifest.json`
+按提示输入标题、描述、简称、主题色、背景色，回车使用默认值。脚本会生成 `index.json`、`manifest.json`
 
-# 启动后端
+## 启动后端
 
 ```
 node server.js
 # 或自行用喜欢的方法常驻
 ```
 
-# Nginx 反代
+## Nginx 反代
 
 支持反代，但要注意：
 
@@ -90,8 +89,6 @@ node server.js
 | `/api/*` | `no-store` |
 
 切片文件名带递增序号且内容不可变，所以可以长缓存；m3u8 是实时的，必须每次回源。
-
-网页背景用的是 `/cover-blur/:id`——服务端预生成的 96×96 已模糊小图（约 0.5 KB）
 
 ## 健康检查
 
@@ -161,7 +158,7 @@ node server.js
 | `source` | 没有在播曲目时为 `[]`（空数组），与 Icecast 行为一致 |
 
 - 这个接口是给监控、脚本和「判断这是不是一个网络电台」的工具做兼容用的，与音频传输方式无关。本站走 HLS，不提供 ICY 直推流，`server_type` 只是名义值
-- 只读、无副作用，不触达曲库与 ffmpeg，可以和 `/healthz` 一起交给监控轮询
+- 只读、不触达曲库与 ffmpeg，可以和 `/healthz` 一起交给监控轮询
 - 外部播放器（fb2k / VLC）读的是 ICY 的 `StreamTitle`，不是这个接口，所以它不会让播放器显示曲名
 
 ## 配置说明
@@ -220,7 +217,7 @@ node server.js
 | `hlsListSize` | m3u8 保留的切片数。和 `hlsTime` 一起决定观众落后直播多久 |
 | `hlsStartNumberSource` | 切片序号来源，默认 `epoch`（Unix 时间戳）。重启后序号单调递增，客户端不会因为序号回退而集体 404。需要 ffmpeg 4.3+ |
 | `liveSyncDurationCount` | 必须和前端 `index.html` 里 hls.js 的同名参数一致（默认 2）。改了它，服务端算出的播放点就会和浏览器实际听到的位置错开 |
-| `streamDelay` | 额外的保险垫，单位秒，默认 0。**正常不需要改**——真实播放位置由 m3u8 的 `PROGRAM-DATE-TIME` 推算。只在观测到「歌词稳定偏早」时才加一点 |
+| `streamDelay` | 额外的保险，单位秒，默认 0。**正常不需要改**——真实播放位置由 m3u8 的 `PROGRAM-DATE-TIME` 推算。只在观测到「歌词稳定偏早」时才加一点 |
 | `playlistCacheMs` | m3u8 内存缓存时间，默认 250。越小越实时、回源越多 |
 | `shuffle` | 是否每轮打乱曲库 |
 | `scanInterval` | 曲库重扫间隔，毫秒，默认 300000（5 分钟）。未变更的文件直接读缓存 |
@@ -230,7 +227,7 @@ node server.js
 | `coverTimeoutMs` | 抽封面 / 量响度超时，默认 8000 |
 | `loudnessEnabled` | 是否启用响度归一化，默认 `true`。关掉就完全不测量、不加增益 |
 | `loudnessTarget` | 目标积分响度（LUFS），默认 -16。播客/音乐常见 -16 ~ -14 |
-| `loudnessMaxGain` | 单曲最大增益（dB），默认 12。防止把老录音拉满 |
+| `loudnessMaxGain` | 单曲最大增益（dB），默认 12。防止把老音频拉满 |
 | `controlPath` | 控制面板路径。为空则禁用控制功能 |
 | `controlToken` | 控制面板 token。至少 16 位。为空则禁用控制功能 |
 
